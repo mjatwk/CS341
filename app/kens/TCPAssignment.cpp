@@ -13,6 +13,8 @@
 #include <E/Networking/E_Packet.hpp>
 #include <cerrno>
 
+#define for_each_bound_addr_cur for(cur = bound_addrs->next; cur != bound_addrs; cur = cur->next)
+
 namespace E {
 
 addr_entry* bound_addrs;
@@ -58,6 +60,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
   addr_entry* addr;
   int fd;
   bool success;
+  int n;
 
   switch (param.syscallNumber) {
   case SOCKET:
@@ -123,12 +126,28 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     
     success = true;
     memcpy(sock, static_cast<struct sockaddr_in *>(std::get<void *> (param.params[1])), sizeof(struct sockaddr_in));
-    
+
     // check if the address is not bound
-    for (cur = bound_addrs->next; cur != bound_addrs; cur = cur->next) {
-      if (!memcmp(cur->addr, sock, sizeof(addr_entry)))
+    for_each_bound_addr_cur {
+      // if fd is already bound
+      if (cur->fd == std::get<int>(param.params[0]))
       {
-        // the address is already bound
+        success = false;
+        break;
+      }
+      
+      // if INADDR_ANY && same port number
+      if ( (cur->addr->sin_addr.s_addr == htonl(INADDR_ANY) || sock->sin_addr.s_addr == htonl(INADDR_ANY)) &&
+        !memcmp(&cur->addr->sin_port, &sock->sin_port, sizeof(sock->sin_port))) 
+      {
+        success = false;
+        break;
+      }
+
+      // the address is already bound
+      if (!memcmp(&cur->addr->sin_addr, &sock->sin_addr, sizeof(sock->sin_addr)) && 
+        !memcmp(&cur->addr->sin_port, &sock->sin_port, sizeof(sock->sin_port)))
+      {
         success = false;
         break;
       }
@@ -164,7 +183,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     if (addr == NULL) {
       this->returnSystemCall(syscallUUID, -1);
     } else {
-      memcpy(sock, static_cast<struct sockaddr_in *>(std::get<void *> (param.params[1])), sizeof(struct sockaddr_in));
+      memcpy(static_cast<struct sockaddr_in *>(std::get<void *> (param.params[1])), addr, sizeof(struct sockaddr_in)+1);
       this->returnSystemCall(syscallUUID, 0);
     }
 
@@ -181,7 +200,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
   default:
     assert(0);
   }
-  
+
   free(sock);
 }
 
