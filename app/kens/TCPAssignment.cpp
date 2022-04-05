@@ -15,7 +15,18 @@
 
 namespace E {
 
-struct addr_entry* bound_addrs;
+addr_entry* bound_addrs;
+
+addr_entry* get_addr_entry_by_fd(int fd) {
+  for (addr_entry* cur = bound_addrs->next; cur != bound_addrs; cur = cur->next) 
+  {
+    if (cur->fd == fd)
+    {
+      return cur;
+    }
+  } 
+  return NULL;
+}
 
 TCPAssignment::TCPAssignment(Host &host)
     : HostModule("TCP", host), RoutingInfoInterface(host),
@@ -41,12 +52,12 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
   // Remove below
   // (void)syscallUUID;
   // (void)pid;
-  sockaddr_in* sock;
+  sockaddr_in* sock = (sockaddr_in*)malloc(sizeof(sockaddr_in));
   addr_entry* cur;
   addr_entry* new_addr;
+  addr_entry* addr;
   int fd;
-  bool is_gettable;
-  bool is_bindable;
+  bool success;
 
   switch (param.syscallNumber) {
   case SOCKET:
@@ -57,7 +68,19 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
 
   case CLOSE:
     // this->syscall_close(syscallUUID, pid, std::get<int>(param.params[0]));
-    
+    fd = std::get<int>(param.params[0]);
+    this->removeFileDescriptor(pid, fd);
+
+    addr = get_addr_entry_by_fd(fd);
+    if (addr == NULL) {
+      success = false;
+      this->returnSystemCall(syscallUUID, -1); 
+    } else {
+      addr->prev->next = addr->next;
+      addr->next->prev = addr->prev;
+      free(addr);
+      this->returnSystemCall(syscallUUID, 0);
+    }
     break;
   
   case READ:
@@ -98,9 +121,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     //     (socklen_t)std::get<int>(param.params[2]));
     // int bind(int socket, const struct sockaddr *address, socklen_t address_len);
     
-    is_bindable = true;
-
-    sock = (sockaddr_in*)malloc(sizeof(sockaddr_in));
+    success = true;
     memcpy(sock, static_cast<struct sockaddr_in *>(std::get<void *> (param.params[1])), sizeof(struct sockaddr_in));
     
     // check if the address is not bound
@@ -108,12 +129,12 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
       if (!memcmp(cur->addr, sock, sizeof(addr_entry)))
       {
         // the address is already bound
-        is_bindable = false;
+        success = false;
         break;
       }
     } 
 
-    if (is_bindable) {
+    if (success) {
       new_addr = (addr_entry *)malloc(sizeof(addr_entry));
       new_addr->fd = std::get<int>(param.params[0]);
       new_addr->addr = sock;
@@ -137,22 +158,14 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     //     static_cast<struct sockaddr *>(std::get<void *>(param.params[1])),
     //     static_cast<socklen_t *>(std::get<void *>(param.params[2])));
     // int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
-    sock = static_cast<struct sockaddr_in *>(std::get<void *> (param.params[1]));
     fd = std::get<int>(param.params[0]);
 
-    is_gettable = false;
-    for (cur = bound_addrs->next; cur != bound_addrs; cur = cur->next) {
-      if (cur->fd == fd)
-      {
-        memcpy(sock, static_cast<struct sockaddr_in *>(std::get<void *> (param.params[1])), sizeof(struct sockaddr_in));
-        is_gettable = true;
-        break;
-      }
-    } 
-    if (is_gettable) {
-      this->returnSystemCall(syscallUUID, 0);
-    } else {
+    addr = get_addr_entry_by_fd(fd);
+    if (addr == NULL) {
       this->returnSystemCall(syscallUUID, -1);
+    } else {
+      memcpy(sock, static_cast<struct sockaddr_in *>(std::get<void *> (param.params[1])), sizeof(struct sockaddr_in));
+      this->returnSystemCall(syscallUUID, 0);
     }
 
     break;
@@ -168,6 +181,8 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
   default:
     assert(0);
   }
+  
+  free(sock);
 }
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
