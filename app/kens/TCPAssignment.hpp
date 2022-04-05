@@ -17,6 +17,12 @@
 #include <netinet/tcp.h>
 
 namespace E {
+  struct addr_entry {
+    int fd;
+    struct sockaddr_in *addr;
+    struct addr_entry *prev;
+    struct addr_entry *next;
+  };
 
 class TCPAssignment : public HostModule,
                       private RoutingInfoInterface,

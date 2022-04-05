@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "*.js": "javascriptreact",
+        "any": "cpp",
+        "functional": "cpp",
+        "memory": "cpp",
+        "optional": "cpp",
+        "sstream": "cpp",
+        "*.tcc": "cpp",
+        "limits": "cpp"
+    }
+}
