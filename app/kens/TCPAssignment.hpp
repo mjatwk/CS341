@@ -17,15 +17,43 @@
 #include <netinet/tcp.h>
 
 namespace E {
+  enum socket_status {OPENED, BOUND, LISTENING, CONNECTING, ACCEPTING, CONNECTED, CLOSED, ERROR};
 
   struct addr_entry {
     int fd;
-    struct sockaddr_in *addr;
+    int pid;
+    std::string host_name;
+    struct syscall_entry *self;
+    enum socket_status status;
+    struct sockaddr_in host_addr;
+    struct sockaddr_in peer_addr;
     struct addr_entry *prev;
     struct addr_entry *next;
+    int num_listens;
+    int backlog;
+    addr_entry* all_listens;
+    int host_status;
   };
   
-  addr_entry* get_addr_entry_by_fd(int fd);
+  struct syscall_entry {
+    UUID syscall_id;
+    UUID timer;
+    struct addr_entry *sock;
+    struct syscall_entry *prev;
+    struct syscall_entry *next;
+  };
+
+  struct SYN {
+    struct sockaddr_in addr;
+    int a;
+  };
+
+  struct ACK {
+    struct sockaddr_in addr;
+    int a;
+  };
+
+  // addr_entry* get_addr_entry_by_fd(int fd);
 
 class TCPAssignment : public HostModule,
                       private RoutingInfoInterface,

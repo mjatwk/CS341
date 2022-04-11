@@ -40,7 +40,6 @@ protected:
     struct sockaddr_in addr;
     socklen_t len = sizeof(addr);
     memset(&addr, 0, len);
-
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = inet_addr(env["LISTEN_ADDR"].c_str());
     addr.sin_port = htons(atoi(env["LISTEN_PORT"].c_str()));
@@ -128,7 +127,6 @@ protected:
 
     long connect_time = atol(env["CONNECT_TIME"].c_str());
     usleep(connect_time);
-
     for (int k = 0; k < connect_count; k++) {
       int client_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
       struct sockaddr_in addr;
@@ -501,12 +499,14 @@ TEST_F(TestEnv_Any, TestAccept_MultipleInterface2) {
   accept_env["ACCEPT_PERIOD"] = "0";
 
   accept_env["ACCEPT_COUNT"] = "4";
+  // accept_env["EXPECT_ACCEPT"] = "0";
   accept_env["EXPECT_ACCEPT"] = "4";
   accept_env["LISTEN_ADDR"] = host1_ip;
   int server1_pid =
       host1->addApplication<TestHandshake_Accept>(*host1, accept_env);
 
   accept_env["ACCEPT_COUNT"] = "2";
+  // accept_env["EXPECT_ACCEPT"] = "0";
   accept_env["EXPECT_ACCEPT"] = "2";
   accept_env["LISTEN_ADDR"] = host1_ip2;
   int server2_pid =
