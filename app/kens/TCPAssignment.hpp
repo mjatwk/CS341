@@ -18,6 +18,51 @@
 
 namespace E {
 
+enum tcp_stat
+{
+  TCP_ESTABLISHED = 1,  // connected
+  TCP_SYN_SENT,         // 
+  TCP_SYN_RECV,         // 
+  TCP_FIN_WAIT1,        //
+  TCP_FIN_WAIT2,        //
+  TCP_TIME_WAIT,        
+  TCP_CLOSE,            // close
+  TCP_CLOSE_WAIT,       // close_wait
+  TCP_LAST_ACK,
+  TCP_LISTEN,           // listen
+  TCP_CLOSING   /* now a valid state */
+};
+
+enum sock_stat {
+  OPENED, 
+  BOUND, 
+  LISTENING, 
+  CONNECTING, 
+  ACCEPTING,
+  CONNECTED, 
+  ERROR
+};
+
+struct socket_info {
+  std::string host_name;
+  int fd;
+  sockaddr_in host_addr;
+  sockaddr_in peer_addr;
+  enum tcp_stat tcp_status;
+  enum sock_stat sock_status;
+  bool is_bound;
+
+  socket_info *prev;
+  socket_info *next;
+};
+
+struct addr_entry {
+  sockaddr_in addr;
+
+  addr_entry *prev;
+  addr_entry *next;
+};
+
 class TCPAssignment : public HostModule,
                       private RoutingInfoInterface,
                       public SystemCallInterface,
