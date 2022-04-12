@@ -44,16 +44,20 @@ enum sock_stat {
 };
 
 struct socket_info {
-  std::string host_name;
   int fd;
   sockaddr_in host_addr;
   sockaddr_in peer_addr;
   enum tcp_stat tcp_status;
   enum sock_stat sock_status;
-  bool is_bound;
+
+  struct syscall_entry *self_syscall;
 
   socket_info *prev;
   socket_info *next;
+
+  int backlog;
+  struct packet_info *pending_list;
+  int pending_num;
 };
 
 struct addr_entry {
@@ -61,6 +65,38 @@ struct addr_entry {
 
   addr_entry *prev;
   addr_entry *next;
+};
+
+struct syscall_entry {
+  UUID uuid;
+  socket_info* self_socket;
+
+  syscall_entry *prev;
+  syscall_entry *next;
+};
+
+struct packet_info {
+  sockaddr_in src_addr;
+  sockaddr_in dst_addr;
+  int32_t seq;
+  int32_t ack;
+  uint16_t SYN;
+  uint16_t FIN;
+  int checksum;
+
+  packet_info *prev;
+  packet_info *next;
+};
+
+struct tcp_segment {
+  int16_t src_port;
+  int16_t dst_port;
+  int32_t seq;
+  int32_t ack;
+  uint16_t flags;
+  int16_t rec_win;
+  int16_t checksum;
+  int16_t urg_pts;
 };
 
 class TCPAssignment : public HostModule,
