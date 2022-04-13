@@ -66,10 +66,8 @@ protected:
       struct sockaddr_in client_addr;
       socklen_t client_len = sizeof(client_addr);
       memset(&client_addr, 0, client_len);
-      printf("here01\n");
       int client_fd =
           accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
-      printf("here02\n");
       if (client_fd >= 0) {
         EXPECT_EQ(client_len, sizeof(client_addr));
         EXPECT_EQ(client_addr.sin_family, AF_INET);
@@ -141,11 +139,13 @@ protected:
       addr.sin_port = htons(atoi(env["CONNECT_PORT"].c_str()));
 
       int ret = connect(client_socket, (struct sockaddr *)&addr, len);
+      printf("return value is %d\n", ret);
       if (ret == 0) {
         struct sockaddr_in temp_addr;
         socklen_t temp_len = sizeof(temp_addr);
         int ret = getpeername(client_socket, (struct sockaddr *)&temp_addr,
                               &temp_len);
+                              printf("here\n");
         EXPECT_EQ(ret, 0);
         EXPECT_EQ(addr.sin_addr.s_addr, temp_addr.sin_addr.s_addr);
         EXPECT_EQ(addr.sin_family, temp_addr.sin_family);
@@ -157,7 +157,7 @@ protected:
         for (int other_port : client_ports) {
           EXPECT_NE((int)temp_addr.sin_port, other_port);
         }
-
+        printf("here\n");
         client_sockets.push_back(client_socket);
         client_ports.push_back(temp_addr.sin_port);
       }
