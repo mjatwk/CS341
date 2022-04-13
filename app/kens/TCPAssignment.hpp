@@ -45,6 +45,7 @@ enum sock_stat {
 
 struct socket_info {
   int fd;
+  int pid;
   sockaddr_in host_addr;
   sockaddr_in peer_addr;
   enum tcp_stat tcp_status;
@@ -70,6 +71,9 @@ struct addr_entry {
 struct syscall_entry {
   UUID uuid;
   socket_info* self_socket;
+  int new_fd;
+  sockaddr* temp_sockaddr;
+  struct packet_info *sent_packet;
 
   syscall_entry *prev;
   syscall_entry *next;
@@ -89,14 +93,14 @@ struct packet_info {
 };
 
 struct tcp_segment {
-  int16_t src_port;
-  int16_t dst_port;
-  int32_t seq;
-  int32_t ack;
+  uint16_t src_port;
+  uint16_t dst_port;
+  uint32_t seq;
+  uint32_t ack;
   uint16_t flags;
-  int16_t rec_win;
-  int16_t checksum;
-  int16_t urg_pts;
+  uint16_t rec_win;
+  uint16_t checksum;
+  uint16_t urg_pts;
 };
 
 class TCPAssignment : public HostModule,
