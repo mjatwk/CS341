@@ -56,7 +56,6 @@ protected:
 
     long accept_time = atol(env["ACCEPT_TIME"].c_str());
     usleep(accept_time);
-
     int accept_count = atoi(env["ACCEPT_COUNT"].c_str());
     int expected_accept = atoi(env["EXPECT_ACCEPT"].c_str());
     long accept_period = atoi(env["ACCEPT_PERIOD"].c_str());
@@ -67,8 +66,10 @@ protected:
       struct sockaddr_in client_addr;
       socklen_t client_len = sizeof(client_addr);
       memset(&client_addr, 0, client_len);
+      printf("here01\n");
       int client_fd =
           accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
+      printf("here02\n");
       if (client_fd >= 0) {
         EXPECT_EQ(client_len, sizeof(client_addr));
         EXPECT_EQ(client_addr.sin_family, AF_INET);

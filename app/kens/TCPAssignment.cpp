@@ -18,36 +18,64 @@ namespace E {
 #define min(a, b) (a > b ? b : a)
 #define MIN_BACKLOG 1
 
-  struct socket_info* all_sockets;
-  struct addr_entry* bound_addrs;
-  struct syscall_entry* blocked_syscalls;
 
-bool is_addr_used(sockaddr* addr) {
+struct socket_info* all_sockets;
+struct addr_entry* bound_addrs;
+struct syscall_entry* blocked_syscalls;
+
+
+uint16_t convert_2byte(uint16_t ori) {
+  return (ori << 8) | (ori >> 8);
+}
+
+uint32_t convert_4byte(uint32_t ori) {
+  return ((ori << 24)&0xFF000000) | ((ori << 8)&0x00FF0000) | ((ori >> 8)&0x0000FF00) | ((ori >> 24)&0x000000FF);
+}
+
+bool is_bound(int pid, int fd, sockaddr* addr) {
   sockaddr_in* addr_in = (sockaddr_in*)addr;
-  bool arrived_packet = false;
+  bool bound = false;
   for(addr_entry* cur = bound_addrs->next; cur != bound_addrs; cur = cur->next) {
-
-    // same addr and port
-    if(!memcmp(&cur->addr, addr, sizeof(cur->addr))) {
-      arrived_packet = true;
+    // same fd
+    if(cur->fd == fd && cur->pid == pid) {
+      bound = true;
       break;
     }
-
+    // same addr and port
+    if(!memcmp(&cur->addr, addr, sizeof(cur->addr))) {
+      bound = true;
+      break;
+    }
     // INADDR_ANY && same port
     if((cur->addr.sin_addr.s_addr == INADDR_ANY || addr_in->sin_addr.s_addr == INADDR_ANY) &&
       cur->addr.sin_port == addr_in->sin_port) {
-      arrived_packet = true;
+      bound = true;
       break;
     }
   }
-  return arrived_packet;
+  return bound;
 } 
 
 // get socket_info by FD from HEAD list
-socket_info* get_socket_info_by_fd(socket_info* head, int fd) {
+socket_info* get_socket_info_by_fd(socket_info* head, int pid, int fd) {
   for (socket_info* cur = head->next; cur != head; cur = cur->next) 
   {
-    if (cur->fd == fd)
+    if (cur->fd == fd && cur->pid == pid)
+    {
+      return cur;
+    }
+  } 
+  return NULL;
+}
+
+// get socket_info by ADDR from HEAD list
+socket_info* get_socket_info_by_addr(socket_info* head, sockaddr_in* addr) {
+  for (socket_info* cur = head->next; cur != head; cur = cur->next) 
+  {
+    // printf("getsockaddr: %x:%d\n", cur->host_addr.sin_addr.s_addr, cur->host_addr.sin_port);
+    if ((cur->host_addr.sin_addr.s_addr == convert_4byte(addr->sin_addr.s_addr) && cur->host_addr.sin_port == convert_2byte(addr->sin_port)) ||
+      (cur->host_addr.sin_addr.s_addr == INADDR_ANY || 
+        addr->sin_addr.s_addr == INADDR_ANY))
     {
       return cur;
     }
@@ -56,13 +84,17 @@ socket_info* get_socket_info_by_fd(socket_info* head, int fd) {
 }
 
 // get socket_info by HOST_ADDR from HEAD list
-socket_info* get_socket_info_by_addr(socket_info* head, sockaddr_in* addr) {
-  for (socket_info* cur = head->next; cur != head; cur = cur->next) 
+packet_info* pop_packet_info_by_addr(packet_info* head, sockaddr_in* addr) {
+  for (packet_info* cur = head->next; cur != head; cur = cur->next) 
   {
-    if (!memcmp(&cur->host_addr, addr, sizeof(sockaddr_in)) ||
-      (cur->host_addr.sin_addr.s_addr == INADDR_ANY || 
+    if (cur->src_addr.sin_addr.s_addr == addr->sin_addr.s_addr ||
+      (cur->src_addr.sin_addr.s_addr == INADDR_ANY || 
         addr->sin_addr.s_addr == INADDR_ANY))
     {
+      cur->prev->next = cur->next;
+      cur->next->prev = cur->prev;
+      cur->next = NULL;
+      cur->prev = NULL;
       return cur;
     }
   } 
@@ -124,20 +156,23 @@ void remove_socket_info(socket_info* sock_info) {
 }
 
 // append WAITER to the LISTENER's pending list
-void append_pending_list(socket_info* listener, packet_info* waiter) {
-  listener->pending_list->prev->next = waiter;
-  waiter->prev = listener->pending_list->prev;
-  waiter->next = listener->pending_list;
-  listener->pending_list->prev = waiter;
+void append_packet_info(packet_info* head, packet_info* waiter) {
+  head->prev->next = waiter;
+  waiter->prev = head->prev;
+  waiter->next = head;
+  head->prev = waiter;
 }
 
-// remove SOCK_INFO from the pending_list
-void remove_pending_list(packet_info* pack_info) {
+// remove SOCK_INFO from pending_list or established_list 
+void remove_packet_info(packet_info* pack_info) {
   pack_info->prev->next = pack_info->next;
   pack_info->next->prev = pack_info->prev;
+  pack_info->prev = NULL;
+  pack_info->next = NULL;
 }
 
-void free_pending_list(packet_info* head) {
+// 
+void free_packet_list(packet_info* head) {
   packet_info* temp;
   for (packet_info* cur = head->next; cur != head; ) {
     temp = cur->next;
@@ -172,14 +207,6 @@ void free_blocked_list(syscall_entry* head) {
 }
 
 
-uint16_t convert_2byte(uint16_t ori) {
-  return (ori << 8) | (ori >> 8);
-}
-
-uint32_t convert_4byte(uint32_t ori) {
-  return ((ori << 24)&0xFF000000) | ((ori << 8)&0x00FF0000) | ((ori >> 8)&0x0000FF00) | ((ori >> 24)&0x000000FF);
-}
-
 TCPAssignment::TCPAssignment(Host &host)
     : HostModule("TCP", host), RoutingInfoInterface(host),
       SystemCallInterface(AF_INET, IPPROTO_TCP, host),
@@ -207,6 +234,7 @@ void TCPAssignment::finalize() {
     this->returnSystemCall(cur_syscall->uuid, -1);
   }
   free(blocked_syscalls);
+  // TODO: free
 }
 
 void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
@@ -217,9 +245,10 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
   // (void)pid;
 
   socket_info* sock_info;
+  socket_info* new_sock_info;
   tcp_segment* new_tcp_seg;
 
-  packet_info* pending_pack_info;
+  packet_info* established_pack_info;
   packet_info* new_pack_info;
 
   int fd;
@@ -253,43 +282,53 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     sock_info->fd = this->createFileDescriptor(pid);
     sock_info->pid = pid;
     sock_info->tcp_status = TCP_CLOSE;
-    sock_info->sock_status = OPENED;
 
     append_socket_info(all_sockets, sock_info);
-
+   
     sock_info->pending_list = (packet_info *)malloc(sizeof(packet_info));
     memset(sock_info->pending_list, 0, sizeof(packet_info));
     sock_info->pending_list->prev = sock_info->pending_list;
     sock_info->pending_list->next = sock_info->pending_list;
 
+    sock_info->established_list = (packet_info *)malloc(sizeof(packet_info));
+    memset(sock_info->established_list, 0, sizeof(packet_info));
+    sock_info->established_list->prev = sock_info->established_list;
+    sock_info->established_list->next = sock_info->established_list;
+
     sock_info->self_syscall = (syscall_entry *)malloc(sizeof(syscall_entry));
     memset(sock_info->self_syscall, 0, sizeof(syscall_entry));
-
+    sock_info->self_syscall->prev = NULL;
+    sock_info->self_syscall->next = NULL;
+    
     this->returnSystemCall(syscallUUID, sock_info->fd);
     break;
 
   case CLOSE:
     // this->syscall_close(syscallUUID, pid, std::get<int>(param.params[0]));
     // int close(int fd)
-    
     fd = std::get<int>(param.params[0]);
-    sock_info = get_socket_info_by_fd(all_sockets, fd);    
+    sock_info = get_socket_info_by_fd(all_sockets, pid, fd);
     temp_addr_entry = get_addr_entry_by_addr(bound_addrs, &sock_info->host_addr);
     this->removeFileDescriptor(pid, fd);
-
     // handle sock_info
     // if sock_info is null
     if (sock_info == NULL){
       success = false;
       this->returnSystemCall(syscallUUID, -1);
     } else {
-      remove_socket_info(sock_info);
-      free_pending_list(sock_info->pending_list);
-      remove_syscall_entry(sock_info->self_syscall);
-      free(sock_info->self_syscall);
-      free(sock_info);
-    }
+      // free_packet_list(sock_info->pending_list);
+      // free_packet_list(sock_info->established_list);
+      // if(sock_info->self_syscall->next != NULL) {
+      //   remove_syscall_entry(sock_info->self_syscall);
+      // }
+      // free(sock_info->self_syscall);
+      
+      // remove_socket_info(sock_info);
+      // free(sock_info);
 
+
+      // TODO: free
+    }
     // handle addr_entry
     if (temp_addr_entry != NULL){
       remove_addr_entry(temp_addr_entry);
@@ -333,22 +372,19 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
 
     fd = std::get<int>(param.params[0]);
     backlog = std::get<int>(param.params[1]);
-    sock_info = get_socket_info_by_fd(all_sockets, fd);
-
+    sock_info = get_socket_info_by_fd(all_sockets, pid, fd);
     // if fd is invalid 
     if (sock_info == NULL) {
       success = false;
       this->returnSystemCall(syscallUUID, -1);
       break;
     }
-
     // sock_info init
     if (backlog <= 0){ 
       backlog = MIN_BACKLOG;
     }
 
     sock_info->backlog = backlog;
-    sock_info->sock_status = LISTENING;
     sock_info->tcp_status = TCP_LISTEN;
 
     this->returnSystemCall(syscallUUID, 0);
@@ -365,91 +401,63 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     temp_sockaddr = static_cast<struct sockaddr *>(std::get<void *>(param.params[1]));
     sock_len_p = static_cast<socklen_t *>(std::get<void *>(param.params[2]));
 
-
+    printf("accept() started\n");
     // ERROR: not an existing fd
-    sock_info = get_socket_info_by_fd(all_sockets, fd);
+    sock_info = get_socket_info_by_fd(all_sockets, pid, fd);
     if (sock_info == NULL) {
       success = false;
       this->returnSystemCall(syscallUUID, -1);
+      printf("accept01\n");
       break;
     }
-    
-    // ERROR: listen() not called before
-    if (sock_info->tcp_status != TCP_LISTEN) {
-      success = false;
-      this->returnSystemCall(syscallUUID, -1);
-      break;
-    }
+    // ERROR: listen() never called before
+    // if (sock_info->tcp_status != TCP_LISTEN) {
+    //   success = false;
+    //   this->returnSystemCall(syscallUUID, -1);
+    //   break;
+    // }
 
-    *sock_len_p = sizeof(sockaddr_in);
+    // There exists etablished connections
+    if (sock_info->established_num != 0) {
 
-    // init self_syscall
-    sock_info->self_syscall->uuid = syscallUUID;
-    sock_info->self_syscall->self_socket = sock_info;
-    sock_info->self_syscall->temp_sockaddr = temp_sockaddr;
+      printf("accept01\n");
+      // pop from established list
+      established_pack_info = sock_info->established_list->next;
+      remove_packet_info(established_pack_info);
+      sock_info->established_num--;
 
-    // append to blocked_syscalls
-    append_syscall_entry(blocked_syscalls, sock_info->self_syscall);
-    printf("%d\n", sock_info->pending_num);
-    if (sock_info->pending_num == 0) {
-      // if pending list is empty
-      sock_info->self_syscall->new_fd = -1;
-      sock_info->sock_status = ACCEPTING;
+      // create a new fd
+      new_sock_info = (socket_info*)malloc(sizeof(socket_info));
+      memset(new_sock_info, 0, sizeof(socket_info));
+      append_socket_info(all_sockets, new_sock_info);
+      printf("accept02\n");
+      
+      // initialize
+      new_sock_info->fd = this->createFileDescriptor(pid);
+      new_sock_info->pid = pid;
+      new_sock_info->tcp_status = TCP_ESTABLISHED;
+      new_sock_info->self_syscall = (syscall_entry *)malloc(sizeof(syscall_entry));
+      memset(sock_info->self_syscall, 0, sizeof(syscall_entry));
+      printf("accept03\n");
+
+      memcpy(&new_sock_info->host_addr, &sock_info->host_addr, sizeof(sockaddr_in));
+      memcpy(&new_sock_info->peer_addr, &established_pack_info->src_addr, sizeof(sockaddr_in));
+
+      // return
+      *sock_len_p = sizeof(sockaddr_in);
+      memcpy(temp_sockaddr, &new_sock_info->peer_addr, sizeof(sockaddr_in));
+      printf("fd is %d\n", new_sock_info->fd);
+      this->returnSystemCall(syscallUUID, new_sock_info->fd);
+
+    // There are no established connection, blocked.
     } else {
-      // if pending list not empty
-
-      sock_info->self_syscall->new_fd = this->createFileDescriptor(pid);
-
-      pending_pack_info = sock_info->pending_list->next;
-      remove_pending_list(pending_pack_info);
-      sock_info->pending_num--;
-
-      // printf("accept 06-1: %d\n", ((sockaddr_in*)temp_sockaddr)->sin_port);
-      // prepare tcp_segment
-      new_tcp_seg = (tcp_segment*)malloc(sizeof(tcp_segment));
-      memset(new_tcp_seg, 0, sizeof(tcp_segment));
-      new_tcp_seg->src_port = convert_2byte(pending_pack_info->dst_addr.sin_port);
-      new_tcp_seg->dst_port = convert_2byte(pending_pack_info->src_addr.sin_port);
-      new_tcp_seg->seq = rand();
-      new_tcp_seg->seq = convert_4byte(new_tcp_seg->seq);
-      // new_tcp_seg->seq = rand();
-      new_tcp_seg->ack = convert_4byte(pending_pack_info->seq + 1);
-      new_tcp_seg->flags = (5 << 8); // Header length is 5 words
-      new_tcp_seg->flags = (new_tcp_seg->flags + 1) << 3; // ACK is set
-      new_tcp_seg->flags = (new_tcp_seg->flags + 1) << 1; // SYN is set
-      new_tcp_seg->flags = convert_2byte(new_tcp_seg->flags);
-      new_tcp_seg->rec_win = 200;
-      // new_tcp_seg->rec_win = convert_2byte(new_tcp_seg->rec_win);
-      new_tcp_seg->urg_pts = 0;
-      pending_pack_info->dst_addr.sin_addr.s_addr = convert_4byte(pending_pack_info->dst_addr.sin_addr.s_addr);
-      pending_pack_info->src_addr.sin_addr.s_addr = convert_4byte(pending_pack_info->src_addr.sin_addr.s_addr);
-      new_tcp_seg->checksum = htons(~NetworkUtil::tcp_sum(pending_pack_info->src_addr.sin_addr.s_addr, pending_pack_info->dst_addr.sin_addr.s_addr, (uint8_t*)new_tcp_seg, 20));
-
-      pkt.writeData(26, &pending_pack_info->dst_addr.sin_addr.s_addr, 4);
-      pkt.writeData(30, &pending_pack_info->src_addr.sin_addr.s_addr, 4);
-      pkt.writeData(34, new_tcp_seg, 20);
-
-      sock_info->tcp_status = TCP_SYN_RECV;
-      sock_info->self_syscall->sent_packet = pending_pack_info;
-
-
-      // // make new socket
-      // temp_syscall->new_fd = this->createFileDescriptor(pid);
-      // sock_info = (socket_info*)malloc(sizeof(socket_info));
-      // memset(sock_info, 0, sizeof(socket_info));
-      // sock_info->fd = temp_syscall->new_fd;
-      // sock_info->tcp_status = TCP_CLOSE;
-      // sock_info->sock_status = OPENED;
-
-      // append_socket_info(all_sockets, sock_info);
-
-      // sock_info->pending_list = (packet_info *)malloc(sizeof(packet_info));
-      // memset(sock_info->pending_list, 0, sizeof(packet_info));
-      // sock_info->pending_list->prev = sock_info->pending_list;
-      // sock_info->pending_list->next = sock_info->pending_list;
-
-      free(new_tcp_seg);
-      sendPacket("IPv4", pkt);
+      // init self_syscall
+      sock_info->self_syscall->uuid = syscallUUID;
+      sock_info->self_syscall->self_socket = sock_info;
+      sock_info->self_syscall->temp_sockaddr = temp_sockaddr;
+      sock_info->self_syscall->sock_len_p = sock_len_p;
+      // append to blocked_syscalls
+      append_syscall_entry(blocked_syscalls, sock_info->self_syscall);
     }
 
     break;
@@ -461,14 +469,14 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     //     (socklen_t)std::get<int>(param.params[2]));
     // int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     fd = std::get<int>(param.params[0]);
-    sock_info = get_socket_info_by_fd(all_sockets, fd);
+    sock_info = get_socket_info_by_fd(all_sockets, pid, fd);
     
     // if sock_info pointer is null 
     if (sock_info == NULL) {
       success = false;
       this->returnSystemCall(syscallUUID, -1);
       break;
-    } else if (sock_info->sock_status != OPENED) {
+    } else if (sock_info->tcp_status != TCP_CLOSE) {
       success = false;
       this->returnSystemCall(syscallUUID, -1);
       break;
@@ -479,23 +487,29 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
 
     // host_addr bind
     memcpy(&sock_info->host_addr, (sockaddr_in*)std::get<void *>(param.params[1]), (size_t)min(sock_len, (socklen_t)sizeof(sockaddr_in)));
-    // if is already bound 
-    if (is_addr_used((sockaddr *)&sock_info->host_addr)) {
+    // if fd is already bound 
+    if (is_bound(pid, fd, (sockaddr *)&sock_info->host_addr)) {
       success = false;
       this->returnSystemCall(syscallUUID, -1);
       break;
-    } else {
-      // append bound addrs list
-      memcpy(&new_addr_entry->addr, &sock_info->host_addr, sizeof(sockaddr_in));
-      // binding_ip = NetworkUtil::UINT64ToArray<4>(sock_info->host_addr.sin_addr.s_addr);
-      // setIPAddr(binding_ip, sock_info->host_addr.sin_port);
-      append_addr_entry(bound_addrs, new_addr_entry);
     }
-
-    sock_info->sock_status = BOUND;
+    // if addr is already bound
+    if (is_bound(pid, fd, (sockaddr *)&sock_info->host_addr)) {
+      success = false;
+      this->returnSystemCall(syscallUUID, -1);
+      break;
+    }
+    // append bound addrs list
+    memcpy(&new_addr_entry->addr, &sock_info->host_addr, sizeof(sockaddr_in));
+    new_addr_entry->fd = fd;
+    new_addr_entry->pid = pid;
+    append_addr_entry(bound_addrs, new_addr_entry);
     // is always true in the end, breaks before end if fail
     this->returnSystemCall(syscallUUID, 0);
+
+    printf("fd: %d, pid: %d h_addr: 0x%x:%d\n", fd, pid, sock_info->host_addr.sin_addr.s_addr, sock_info->host_addr.sin_port);
     break;
+    
   case GETSOCKNAME:
     // this->syscall_getsockname(
     //     syscallUUID, pid, std::get<int>(param.params[0]),
@@ -503,7 +517,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     //     static_cast<socklen_t *>(std::get<void *>(param.params[2])));
     // int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
     fd = std::get<int>(param.params[0]);
-    sock_info = get_socket_info_by_fd(all_sockets, fd);
+    sock_info = get_socket_info_by_fd(all_sockets, pid, fd);
     temp_sockaddr = static_cast<struct sockaddr *>(std::get<void *>(param.params[1]));
     sock_len_p = static_cast<socklen_t *>(std::get<void *>(param.params[2]));
     
@@ -533,9 +547,9 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
 }
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
-  // Remove below
-  (void)fromModule;
-  (void)packet;
+  // // Remove below
+  // (void)fromModule;
+  // (void)packet;
 
   tcp_segment arrived_tcp_seg;
   ipv4_t src_ip;
@@ -575,121 +589,146 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   arrived_packet->dst_addr.sin_port=arrived_tcp_seg.dst_port;
   packet.readData(30, &addr, 4);
   arrived_packet->dst_addr.sin_addr.s_addr = convert_4byte(addr);
+    printf("addr is 0x%x:%d\n", arrived_packet->dst_addr.sin_addr.s_addr, arrived_packet->dst_addr.sin_port);
 
   socket_info* self_sock_info = get_socket_info_by_addr(all_sockets, &arrived_packet->dst_addr);
   
+  printf("packet 01\n");
+
   arrived_packet->seq = arrived_tcp_seg.seq;
   arrived_packet->ack = arrived_tcp_seg.ack;
   arrived_packet->SYN = !!(arrived_tcp_seg.flags & 0x0002);
+  arrived_packet->ACK = !!(arrived_tcp_seg.flags & 0x0010);
   arrived_packet->FIN = !!(arrived_tcp_seg.flags & 0x0001);
   arrived_packet->checksum = arrived_tcp_seg.checksum;
   arrived_packet->prev = NULL;
-  arrived_packet->next = NULL;    
-
-  Packet pack = packet;
-  if (self_sock_info == NULL) {
-    return;
-  }
+  arrived_packet->next = NULL;   
+  // now, packet info is written in arrived packet 
   
-  // handle cases
-  if (arrived_packet->SYN == 1) {
-    if (arrived_packet->ack == 0) {
-      if (self_sock_info->sock_status == LISTENING || self_sock_info->sock_status == ACCEPTING) {
-        // connect() after listen()
-        if (self_sock_info->pending_num >= self_sock_info->backlog) {
-          // over backlog, cancel automatically
-          return;
-        } else {
-          // pend properly
-          append_pending_list(self_sock_info, arrived_packet);
-          self_sock_info->pending_num++;
-        }
-      } else if (self_sock_info->sock_status == ACCEPTING) {
-        // accept with vacant pending list
-
-        self_sock_info->self_syscall->new_fd = this->createFileDescriptor(self_sock_info->pid);
-
-        // printf("accept 06-1: %d\n", ((sockaddr_in*)temp_sockaddr)->sin_port);
-        // prepare tcp_segment
-        struct tcp_segment* new_tcp_seg = (tcp_segment*)malloc(sizeof(tcp_segment));
-        memset(new_tcp_seg, 0, sizeof(tcp_segment));
-        new_tcp_seg->src_port = convert_2byte(arrived_packet->dst_addr.sin_port);
-        new_tcp_seg->dst_port = convert_2byte(arrived_packet->src_addr.sin_port);
-        new_tcp_seg->seq = rand();
-        new_tcp_seg->seq = convert_4byte(new_tcp_seg->seq);
-        // new_tcp_seg->seq = rand();
-        new_tcp_seg->ack = convert_4byte(arrived_packet->seq + 1);
-        new_tcp_seg->flags = (5 << 8); // Header length is 5 words
-        new_tcp_seg->flags = (new_tcp_seg->flags + 1) << 3; // ACK is set
-        new_tcp_seg->flags = (new_tcp_seg->flags + 1) << 1; // SYN is set
-        new_tcp_seg->flags = convert_2byte(new_tcp_seg->flags);
-        new_tcp_seg->rec_win = 200;
-        // new_tcp_seg->rec_win = convert_2byte(new_tcp_seg->rec_win);
-        new_tcp_seg->urg_pts = 0;
-        arrived_packet->dst_addr.sin_addr.s_addr = convert_4byte(arrived_packet->dst_addr.sin_addr.s_addr);
-        arrived_packet->src_addr.sin_addr.s_addr = convert_4byte(arrived_packet->src_addr.sin_addr.s_addr);
-        new_tcp_seg->checksum = htons(~NetworkUtil::tcp_sum(arrived_packet->src_addr.sin_addr.s_addr, arrived_packet->dst_addr.sin_addr.s_addr, (uint8_t*)new_tcp_seg, 20));
-
-        Packet pkt (54);
-        pkt.writeData(26, &arrived_packet->dst_addr.sin_addr.s_addr, 4);
-        pkt.writeData(30, &arrived_packet->src_addr.sin_addr.s_addr, 4);
-        pkt.writeData(34, new_tcp_seg, 20);
-
-        self_sock_info->tcp_status = TCP_SYN_RECV;
-        self_sock_info->self_syscall->sent_packet = arrived_packet;
-        free(new_tcp_seg);
-        
-        sendPacket("IPv4", pkt);
-        
-      } else {
-        // error
+  // construct a new packet to send
+  struct tcp_segment* new_tcp_seg = (tcp_segment*)malloc(sizeof(tcp_segment));
+  memset(new_tcp_seg, 0, sizeof(tcp_segment));
+  Packet pkt (54);
+  struct packet_info* sent_packet_info = (packet_info *)malloc(sizeof(packet_info));
+  
+  if (self_sock_info == NULL) {
+    printf("packet 02\n");
+  }
+  if (self_sock_info->tcp_status == TCP_CLOSE) {
+    // TCP_CLOSE
+    ;
+  } else if (self_sock_info->tcp_status == TCP_LISTEN || self_sock_info->tcp_status == TCP_SYN_RECV) {
+    
+    if (arrived_packet->SYN == 1 && arrived_packet->ACK != 1) {
+      // TWH1_SYN
+      if (self_sock_info->backlog <= self_sock_info->pending_num) {
         return;
       }
+      printf("packet 04\n");
+      new_tcp_seg->src_port = convert_2byte(arrived_packet->dst_addr.sin_port);
+      new_tcp_seg->dst_port = convert_2byte(arrived_packet->src_addr.sin_port);
+      new_tcp_seg->seq = convert_4byte(rand());
+      new_tcp_seg->ack = convert_4byte(arrived_packet->seq + 1);
+      new_tcp_seg->flags = (5 << 8); // Header length is 5 words
+      new_tcp_seg->flags = (new_tcp_seg->flags + 1) << 3; // ACK is set
+      new_tcp_seg->flags = (new_tcp_seg->flags + 1) << 1; // SYN is set
+      new_tcp_seg->flags = convert_2byte(new_tcp_seg->flags);
+      new_tcp_seg->rec_win = 200;
+      new_tcp_seg->urg_pts = 0;
+      arrived_packet->dst_addr.sin_addr.s_addr = convert_4byte(arrived_packet->dst_addr.sin_addr.s_addr);
+      arrived_packet->src_addr.sin_addr.s_addr = convert_4byte(arrived_packet->src_addr.sin_addr.s_addr);
+      new_tcp_seg->checksum = htons(~NetworkUtil::tcp_sum(arrived_packet->src_addr.sin_addr.s_addr, arrived_packet->dst_addr.sin_addr.s_addr, (uint8_t*)new_tcp_seg, 20));
+      
+      pkt.writeData(26, &arrived_packet->dst_addr.sin_addr.s_addr, 4);
+      pkt.writeData(30, &arrived_packet->src_addr.sin_addr.s_addr, 4);
+      pkt.writeData(34, new_tcp_seg, 20);
+
+      self_sock_info->tcp_status = TCP_SYN_RECV;
+      arrived_packet->seq_sent = convert_4byte(new_tcp_seg->seq);
+      
+      printf("packet 05\n");
+
+
+      append_packet_info(self_sock_info->pending_list, arrived_packet);
+      self_sock_info->pending_num++;
+      printf("appending pending list... \tpending num: %d\n", self_sock_info->pending_num);
+
+      free(new_tcp_seg);
+      printf("packet 06\n");
+      sendPacket("IPv4", pkt);
+
+    } else if (arrived_packet->SYN != 1 && arrived_packet->ACK == 1) {
+      // TWH3_ACK
+      printf("packet 07\n");
+
+
+      if (self_sock_info->pending_num == 0) {
+        return;
+      }
+      self_sock_info->tcp_status = TCP_LISTEN;
+      packet_info* sender_packet = pop_packet_info_by_addr(self_sock_info->pending_list, &arrived_packet->src_addr);
+      if (sender_packet != NULL && sender_packet->seq_sent+1 != arrived_packet->ack) {
+        return;
+      }
+      self_sock_info->pending_num--;
+      append_packet_info(self_sock_info->established_list, arrived_packet);
+      self_sock_info->established_num++;
+      
+      printf("appending establish list... \tpending_num: %d\testablished_num: %d\n", self_sock_info->pending_num, self_sock_info->established_num);
+      
+      // if blocked call exists
+      if (self_sock_info->self_syscall->next != NULL) { 
+        // unblock accept()
+        if (self_sock_info->established_num != 0) {
+          // pop from established list
+          packet_info* sender_packet = self_sock_info->established_list->next;
+          remove_packet_info(sender_packet);
+          self_sock_info->established_num--;
+
+          // create a new fd
+          socket_info* new_sock_info = (socket_info*)malloc(sizeof(socket_info));
+          memset(new_sock_info, 0, sizeof(socket_info));
+          append_socket_info(all_sockets, new_sock_info);
+
+          // initialize
+          new_sock_info->fd = this->createFileDescriptor(self_sock_info->pid);
+          new_sock_info->pid = self_sock_info->pid;
+          new_sock_info->tcp_status = TCP_ESTABLISHED;
+          new_sock_info->self_syscall = (syscall_entry *)malloc(sizeof(syscall_entry));
+          memset(new_sock_info->self_syscall, 0, sizeof(syscall_entry));
+
+          memcpy(&new_sock_info->host_addr, &self_sock_info->host_addr, sizeof(sockaddr_in));
+          memcpy(&new_sock_info->peer_addr, &sender_packet->src_addr, sizeof(sockaddr_in));
+
+
+          // return
+          printf("hi\n");
+          *(self_sock_info->self_syscall->sock_len_p) = sizeof(sockaddr_in);
+          memcpy(self_sock_info->self_syscall->temp_sockaddr, &new_sock_info->peer_addr, sizeof(sockaddr_in));
+          printf("return value fd: %d\n", new_sock_info->fd);
+          this->returnSystemCall(self_sock_info->self_syscall->uuid, new_sock_info->fd);
+          remove_syscall_entry(self_sock_info->self_syscall);
+        }
+      } else {
+        // no blocked calls 
+        ;
+      }
     } else {
-      // pac2_syn+ack
+      // error
+      return;
     }
-  } else if(arrived_packet->SYN == 0) {
-    // pac3_ack
-    int new_fd = self_sock_info->self_syscall->new_fd;
-    // if (arrived_packet->ack != self_sock_info->self_syscall->sent_packet->seq + 1) {
-    //   returnSystemCall(self_sock_info->self_syscall->uuid, -1);
-    //   return;
-    // } else if (arrived_packet->seq != self_sock_info->self_syscall->sent_packet->ack) {
-    //   returnSystemCall(self_sock_info->self_syscall->uuid, -1);
-    //   return;
-    // }
-
-    if (new_fd > 0) {
-      socket_info *new_sock_info = (socket_info*)malloc(sizeof(socket_info));
-    memset(new_sock_info, 0, sizeof(socket_info));
-
-    new_sock_info->fd = new_fd;
-    new_sock_info->pid = self_sock_info->pid;
-    new_sock_info->host_addr = self_sock_info->host_addr;
-    new_sock_info->peer_addr = arrived_packet->src_addr;
-    new_sock_info->tcp_status = TCP_ESTABLISHED;
-    new_sock_info->sock_status = CONNECTED;
-    append_socket_info(all_sockets, new_sock_info);
-    new_sock_info->pending_list = (packet_info *)malloc(sizeof(packet_info));
-    memset(new_sock_info->pending_list, 0, sizeof(packet_info));
-
-    new_sock_info->pending_list->prev = new_sock_info->pending_list;
-    new_sock_info->pending_list->next = new_sock_info->pending_list;
-
-    memcpy(self_sock_info->self_syscall->temp_sockaddr, &arrived_packet->src_addr, sizeof(sockaddr_in));
-
-    // remove from blocked_syscalls
-    remove_syscall_entry(self_sock_info->self_syscall);
-    self_sock_info->sock_status = LISTENING;
-    self_sock_info->tcp_status = TCP_LISTEN;
-    
-    printf("return down here: %d\n", new_fd);
-    this->returnSystemCall(self_sock_info->self_syscall->uuid, new_fd); 
-    }   
-    
+  } else if (self_sock_info->tcp_status == TCP_SYN_SENT) {
+    if (arrived_packet->SYN == 1 && arrived_packet->ACK == 1 ) {
+      // TWH2_ACKSYN
+      
+    } else {
+     // error 
+     ;
+    }
+  } else {
+    // error
+    ;
   }
-
-// should free arrived_packet
 
 }
 

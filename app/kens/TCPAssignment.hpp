@@ -33,23 +33,12 @@ enum tcp_stat
   TCP_CLOSING   /* now a valid state */
 };
 
-enum sock_stat {
-  OPENED, 
-  BOUND, 
-  LISTENING, 
-  CONNECTING, 
-  ACCEPTING,
-  CONNECTED, 
-  ERROR
-};
-
 struct socket_info {
   int fd;
   int pid;
   sockaddr_in host_addr;
   sockaddr_in peer_addr;
   enum tcp_stat tcp_status;
-  enum sock_stat sock_status;
 
   struct syscall_entry *self_syscall;
 
@@ -57,11 +46,15 @@ struct socket_info {
   socket_info *next;
 
   int backlog;
-  struct packet_info *pending_list;
   int pending_num;
+  struct packet_info *pending_list;
+  int established_num;
+  struct packet_info *established_list;
 };
 
 struct addr_entry {
+  int fd;
+  int pid;
   sockaddr_in addr;
 
   addr_entry *prev;
@@ -73,7 +66,8 @@ struct syscall_entry {
   socket_info* self_socket;
   int new_fd;
   sockaddr* temp_sockaddr;
-  struct packet_info *sent_packet;
+  socklen_t* sock_len_p;
+  int seq;
 
   syscall_entry *prev;
   syscall_entry *next;
@@ -85,8 +79,11 @@ struct packet_info {
   int32_t seq;
   int32_t ack;
   uint16_t SYN;
+  uint16_t ACK;
   uint16_t FIN;
   int checksum;
+
+  int32_t seq_sent;
 
   packet_info *prev;
   packet_info *next;
