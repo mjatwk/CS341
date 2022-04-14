@@ -279,7 +279,6 @@ void Host::sendPacketToModule(std::optional<std::string> fromModule,
   if (toModule.compare("Host") == 0) {
     mac_t my_mac;
     packet.readData(6, my_mac.data(), 6);
-
     int selected_port = 0;
     for (size_t k = 0; k < this->ports.size(); k++) {
       auto port_mac = this->getMACAddr(k);

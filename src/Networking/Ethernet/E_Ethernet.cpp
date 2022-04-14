@@ -30,6 +30,7 @@ void Ethernet::packetArrived(std::string fromModule, Packet &&packet) {
       assert(0);
     }
   } else if (fromModule.compare("IPv4") == 0) {
+
     uint8_t first_byte = 0x08;
     uint8_t second_byte = 0x00;
     packet.writeData(12, &first_byte, 1);
@@ -37,6 +38,7 @@ void Ethernet::packetArrived(std::string fromModule, Packet &&packet) {
 
     ipv4_t dst_ip;
     packet.readData(30, dst_ip.data(), 4);
+    // printf("%x\n", *((uint32_t *)dst_ip.data()));
     constexpr ipv4_t ip_broadcast = {255, 255, 255, 255};
     constexpr mac_t mac_broadcast = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     if (dst_ip == ip_broadcast) {
@@ -52,7 +54,9 @@ void Ethernet::packetArrived(std::string fromModule, Packet &&packet) {
       auto src = this->getMACAddr(port);
       auto dst = this->getARPTable(dst_ip);
       packet.writeData(0, dst.value().data(), 6);
+
       packet.writeData(6, src.value().data(), 6);
+
     }
     this->sendPacket("Host", std::move(packet));
   } else if (fromModule.compare("IPv6") == 0) {
