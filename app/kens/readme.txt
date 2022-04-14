@@ -2,6 +2,8 @@
 // readme.txt on Lab2
 // Team 12: Minjun Kim(20190100), Hyewon Hwang(20200722)
 
+// IMPORTANT: USAGE OF 2 TOKENS FOR EACH OF MEMBERS FOR LAB2
+
 >> Data structures
 1. socket_info : handles socket info
 2. addr_entry : linked list entry to record bound addresses
