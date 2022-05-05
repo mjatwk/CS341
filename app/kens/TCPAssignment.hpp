@@ -18,19 +18,29 @@
 
 namespace E {
 
-enum tcp_stat
-{
-  TCP_ESTABLISHED = 1,  // connected
-  TCP_SYN_SENT,         // 
-  TCP_SYN_RECV,         // 
-  TCP_FIN_WAIT1,        //
-  TCP_FIN_WAIT2,        //
-  TCP_TIME_WAIT,        
-  TCP_CLOSE,            // close
-  TCP_CLOSE_WAIT,       // close_wait
+#define min(a, b) (a > b ? b : a)
+#define MIN_BACKLOG 1
+#define START_PORT 0
+
+#define BUF_REAL_SIZE (1 << 22) // 4MB; 2MB + at min PKT_DATA_LEN
+#define BUF_LEN (1 << 21)       // 2MB
+#define PKT_DATA_LEN 1460       // same as MSS
+#define INIT_RTT 100            // in milliseconds (should change)
+#define ALPHA 0.125
+#define BETA 0.25
+
+enum tcp_stat {
+  TCP_ESTABLISHED = 1, // connected
+  TCP_SYN_SENT,        //
+  TCP_SYN_RECV,        //
+  TCP_FIN_WAIT1,       //
+  TCP_FIN_WAIT2,       //
+  TCP_TIME_WAIT,
+  TCP_CLOSE,      // close
+  TCP_CLOSE_WAIT, // close_wait
   TCP_LAST_ACK,
-  TCP_LISTEN,           // listen
-  TCP_CLOSING   /* now a valid state */
+  TCP_LISTEN, // listen
+  TCP_CLOSING /* now a valid state */
 };
 
 struct socket_info {
@@ -50,6 +60,32 @@ struct socket_info {
   struct packet_info *pending_list;
   int established_num;
   struct packet_info *established_list;
+
+  // connection
+  int rand_seq;
+
+  // timer
+  int estimated_rtt = INIT_RTT;
+  int dev_rtt = 0;
+  int timeout_interval = estimated_rtt;
+
+  // snd_buf
+  char *send_base;
+  char *send_end = send_base + BUF_LEN;
+  int send_margin;  // if data overflow, the length of overflow (MAX a packet)
+  char *send_unack; // unacked data start pointer
+  char *send_next;  // where to append next data
+  char *send_window_start;
+  int send_window_size;
+  char *send_window_end;
+
+  // rcv_buf
+  char *rcv_base;
+  char *rcv_end = rcv_base + BUF_LEN;
+  int rcv_margin;   // if data overflow, the length of overflow (MAX a packet)
+  char *rcv_unread; // unread data start pointer
+  char *rcv_next;   // where to append next data
+  int rcv_window_size;
 };
 
 struct addr_entry {
@@ -63,10 +99,10 @@ struct addr_entry {
 
 struct syscall_entry {
   UUID uuid;
-  socket_info* self_socket;
+  socket_info *self_socket;
   int new_fd;
-  sockaddr* temp_sockaddr;
-  socklen_t* sock_len_p;
+  sockaddr *temp_sockaddr;
+  socklen_t *sock_len_p;
   int seq;
 
   syscall_entry *prev;
