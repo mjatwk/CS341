@@ -23,7 +23,7 @@ namespace E {
 #define START_PORT 0
 
 #define BUF_REAL_SIZE (1 << 22) // 4MB; 2MB + at min PKT_DATA_LEN
-#define BUF_LEN (1 << 21)       // 2MB
+#define BUF_SIZE (1 << 21)       // 2MB
 #define PKT_DATA_LEN 1460       // same as MSS
 #define INIT_RTT 100            // in milliseconds (should change)
 #define ALPHA 0.125
@@ -31,8 +31,8 @@ namespace E {
 
 enum tcp_stat {
   TCP_ESTABLISHED = 1, // connected
-  TCP_SYN_SENT,        //
-  TCP_SYN_RECV,        //
+  TCP_SYN_SENT,        // connect()
+  TCP_SYN_RECV,        // connection request
   TCP_FIN_WAIT1,       //
   TCP_FIN_WAIT2,       //
   TCP_TIME_WAIT,
@@ -63,6 +63,8 @@ struct socket_info {
 
   // connection
   int rand_seq;
+  int next_seq;
+  int waiting_seq;
 
   // timer
   int estimated_rtt = INIT_RTT;
@@ -70,22 +72,20 @@ struct socket_info {
   int timeout_interval = estimated_rtt;
 
   // snd_buf
-  char *send_base;
-  char *send_end = send_base + BUF_LEN;
-  int send_margin;  // if data overflow, the length of overflow (MAX a packet)
-  char *send_unack; // unacked data start pointer
-  char *send_next;  // where to append next data
-  char *send_window_start;
-  int send_window_size;
-  char *send_window_end;
+  int8_t *snd_buffer;
+  int8_t *snd_base; // unacked data start pointer = send window base
+  int8_t *snd_next;  // where to append next data
+  int snd_empty_size;
+  int snd_window; // send window size
+  struct packet_elem *sent_packets; // sent and not acked packet list
 
   // rcv_buf
-  char *rcv_base;
-  char *rcv_end = rcv_base + BUF_LEN;
-  int rcv_margin;   // if data overflow, the length of overflow (MAX a packet)
-  char *rcv_unread; // unread data start pointer
-  char *rcv_next;   // where to append next data
-  int rcv_window_size;
+  int8_t *rcv_buffer;
+  int8_t *rcv_base; // unread data start pointer = receive window base
+  int8_t *rcv_next;   // where to append next data
+  int rcv_window; // receive window size = empty buffer size
+
+
 };
 
 struct addr_entry {
@@ -112,14 +112,15 @@ struct syscall_entry {
 struct packet_info {
   sockaddr_in src_addr;
   sockaddr_in dst_addr;
+
+  bool SYN;
+  bool ACK;
+  bool FIN;
+
   int32_t seq;
   int32_t ack;
-  uint16_t SYN;
-  uint16_t ACK;
-  uint16_t FIN;
-  int checksum;
-
-  int32_t seq_sent;
+  uint16_t rec_win;
+  uint16_t checksum;
 
   packet_info *prev;
   packet_info *next;
@@ -134,6 +135,16 @@ struct tcp_segment {
   uint16_t rec_win;
   uint16_t checksum;
   uint16_t urg_pts;
+};
+
+struct packet_elem {
+  struct packet_elem* prev;
+  struct packet_elem* next;
+
+  int ack;
+  int data_size;
+
+  Packet* packet;
 };
 
 class TCPAssignment : public HostModule,
