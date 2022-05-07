@@ -153,12 +153,10 @@ void free_packet_list(packet_info *head) {
   packet_info *temp;
   for (packet_info *cur = head->next; cur != head;) {
     temp = cur->next;
-            printf("2\n");
 
     free(cur);
     cur = temp;
   }
-          printf("3\n");
 
   free(head);
 }
@@ -181,12 +179,10 @@ void free_blocked_list(syscall_entry *head) {
   syscall_entry *temp;
   for (syscall_entry *cur = head->next; cur != head;) {
     temp = cur->next;
-            printf("5\n");
 
     free(cur);
     cur = temp;
   }
-          printf("6\n");
 
   free(head);
 }
@@ -194,7 +190,7 @@ void free_blocked_list(syscall_entry *head) {
 // return new tcp_segment with HOST_PORT, PEER_PORT, SEQ, ACK
 struct tcp_segment *get_new_tcp_seg(sockaddr_in src_addr, sockaddr_in dst_addr,
                                     bool SYN, bool ACK, int seq, int ack) {
-  tcp_segment *new_tcp_seg = (tcp_segment *)malloc(sizeof(tcp_segment));
+  struct tcp_segment *new_tcp_seg = (tcp_segment *)malloc(sizeof(tcp_segment));
   memset(new_tcp_seg, 0, sizeof(tcp_segment));
 
   new_tcp_seg->src_port = (src_addr.sin_port);
@@ -290,9 +286,8 @@ void TCPAssignment::finalize() {
        cur_syscall != blocked_syscalls; cur_syscall = cur_syscall->next) {
     this->returnSystemCall(cur_syscall->uuid, -1);
   }
-          printf("6\n");
 
-  free(blocked_syscalls);
+  free_blocked_list(blocked_syscalls);
   // TODO: free
 }
 
@@ -388,13 +383,15 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
       success = false;
       this->returnSystemCall(syscallUUID, -1);
     } else {
+      sock_info->tcp_status = TCP_CLOSE;
+      free(sock_info->snd_buffer);
+      free(sock_info->rcv_buffer);
+      // free sent packets list
       ;
     }
     // handle addr_entry
     if (temp_addr_entry != NULL) {
       remove_addr_entry(temp_addr_entry);
-              printf("9\n");
-
       free(temp_addr_entry);
     }
     this->returnSystemCall(syscallUUID, 0);
@@ -481,7 +478,6 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
         memcpy(temp + 20, std::get<void *>(param.params[1]), count);
         new_tcp_seg->checksum = htons(
         ~NetworkUtil::tcp_sum(host_ip, peer_ip, (uint8_t *)temp, 20 + count));
-                printf("10\n");
 
         free(temp);
 
@@ -553,7 +549,6 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
       } while (is_bound(pid, fd, (sockaddr *)search_sockaddr));
 
       memcpy(&sock_info->host_addr, search_sockaddr, sizeof(sockaddr_in));
-              printf("11\n");
 
       free(search_sockaddr);
     }
@@ -830,7 +825,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       self_sock_info->rand_seq = rand();
       struct tcp_segment *new_tcp_seg =
           get_new_tcp_seg(arrived_packet->dst_addr, arrived_packet->src_addr,
-                          true, true, self_sock_info->rand_seq, 1);
+                          true, true, self_sock_info->rand_seq, arrived_packet->seq+1);
 
       pkt.writeData(26, &arrived_packet->dst_addr.sin_addr.s_addr, 4);
       pkt.writeData(30, &arrived_packet->src_addr.sin_addr.s_addr, 4);
@@ -840,8 +835,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
 
       append_packet_info(self_sock_info->pending_list, arrived_packet);
       self_sock_info->pending_num++;
-        printf("12\n");
-
       free(new_tcp_seg);
       sendPacket("IPv4", pkt);
 
@@ -928,8 +921,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
     if (arrived_packet->SYN == 1 && arrived_packet->ACK == 1) {
       // TWH2_ACKSYN
       if (self_sock_info->self_syscall->next != NULL) {
-        // unblock connect()
-
         // set tcp status
         self_sock_info->tcp_status = TCP_ESTABLISHED;
 
@@ -963,7 +954,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
         pkt.writeData(30, &arrived_packet->src_addr.sin_addr.s_addr, 4);
         pkt.writeData(34, new_tcp_seg, 20);
         self_sock_info->waiting_seq = arrived_packet->seq + 1;
-        printf("13\n");
         free(new_tcp_seg);
         sendPacket("IPv4", pkt);
 
@@ -1028,7 +1018,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       pkt.writeData(26, &arrived_packet->dst_addr.sin_addr.s_addr, 4);
       pkt.writeData(30, &arrived_packet->src_addr.sin_addr.s_addr, 4);
       pkt.writeData(34, new_tcp_seg, 20);
-        printf("14\n");
 
       free(new_tcp_seg);
       sendPacket("IPv4", pkt);
