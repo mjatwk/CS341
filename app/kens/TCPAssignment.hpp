@@ -25,7 +25,7 @@ namespace E {
 #define BUF_REAL_SIZE (1 << 22) // 4MB; 2MB + at min PKT_DATA_LEN
 #define BUF_SIZE (1 << 21)       // 2MB
 #define PKT_DATA_LEN 1460       // same as MSS
-#define INIT_RTT 100            // in milliseconds (should change)
+#define INIT_RTT 100000000      // 100 ms
 #define ALPHA 0.125
 #define BETA 0.25
 
