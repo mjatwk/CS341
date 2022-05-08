@@ -118,3 +118,40 @@ struct tcp_segment *get_new_tcp_seg(sockaddr_in src_addr, sockaddr_in dst_addr,i
 struct packet_info *tcp_seg_to_pkt_info(struct tcp_segment arrived_tcp_seg,int32_t src_addr, int32_t dst_addr)
 }
 ```
+
+---
+# Modifications
+
+## Read
+- 525; count
+- 531; rcv_base
+- 538; n = count
+
+## Write
+- 559; new_tcp_seg? //  sock_info->next_seq
+- 557 ~ 600; case handle
+- (Q) 599; how to handle snd_next == snd_base?
+- 602 ~ ; should divide data into packets max length of 1460
+- 263 ~ 276; update_remaining()
+- hpp 78 81 82; int8_t *snd_packet int snd_window_remaining int snd_count_remaining
+- (Q) difference of next_seq and snd_packet not in term but behavior?
+- ; append at the last of the list
+- 301 ~ ; send_snd_packets()
+- (Q) why is received packet given as TCP_CLOSE?
+
+## Packet Arrived
+- BUF_REAL_SIZE // BUF_SIZE
+- new_sock_info -> snd_*
+- 278 ~ ; prepare_buffer()
+- need to change after deciding searching techniques
+
+## Remaining Points Before Timer Update
+- unsure about init and free match yet
+- should handle all the side-cases
+- 
+
+## About Accepted New Sockets
+1. Seems correct to have all sockets the same host_addr
+2. Each accepted sockets (the sockets newly made by accept()) would have different peer_addr since they are connected to different sockets
+3. Then if the accepting socket does not have peer_addr, we might distinguish which socket is connected to the corresponding peer_addr -> how bout search using both host_addr and peer_addr?
+4. If with such searching methods, we can even check whether the packet is for connect-3wayhandshake or read/write, only by looking at the peer_addr, since packets with peer_addr cannot accept and vise versa

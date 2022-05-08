@@ -146,6 +146,7 @@ protected:
         if (write_byte < 0)
           break;
       } else {
+        printf("wall read\n");
         int remaining = buffer_size;
         int read_byte = 0;
         while ((read_byte =

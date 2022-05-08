@@ -23,7 +23,7 @@ namespace E {
 #define START_PORT 0
 
 #define BUF_REAL_SIZE (1 << 22) // 4MB; 2MB + at min PKT_DATA_LEN
-#define BUF_SIZE (1 << 21)       // 2MB
+#define BUF_SIZE (1 << 21)      // 2MB
 #define PKT_DATA_LEN 1460       // same as MSS
 #define INIT_RTT 100000000      // 100 ms
 #define ALPHA 0.125
@@ -73,19 +73,20 @@ struct socket_info {
 
   // snd_buf
   int8_t *snd_buffer;
-  int8_t *snd_base; // unacked data start pointer = send window base
-  int8_t *snd_next;  // where to append next data
+  int8_t *snd_base;   // unacked data start pointer = send window base
+  int8_t *snd_next;   // where to append next data
+  int8_t *snd_packet; // where to start sending next packet
   int snd_empty_size;
   int snd_window; // send window size
+  int snd_count_remaining;
+  int snd_window_remaining;
   struct packet_elem *sent_packets; // sent and not acked packet list
 
   // rcv_buf
   int8_t *rcv_buffer;
   int8_t *rcv_base; // unread data start pointer = receive window base
-  int8_t *rcv_next;   // where to append next data
-  int rcv_window; // receive window size = empty buffer size
-
-
+  int8_t *rcv_next; // where to append next data
+  int rcv_window;   // receive window size = empty buffer size
 };
 
 struct addr_entry {
@@ -138,13 +139,13 @@ struct tcp_segment {
 };
 
 struct packet_elem {
-  struct packet_elem* prev;
-  struct packet_elem* next;
+  struct packet_elem *prev;
+  struct packet_elem *next;
 
   int ack;
   int data_size;
 
-  Packet* packet;
+  Packet *packet;
 };
 
 class TCPAssignment : public HostModule,

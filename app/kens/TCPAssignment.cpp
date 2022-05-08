@@ -187,7 +187,7 @@ void free_blocked_list(syscall_entry *head) {
   free(head);
 }
 
-// return new tcp_segment with HOST_PORT, PEER_PORT, SEQ, ACK
+// return new tcp_segment with SRC_ADDR, DST_ADDR, 'SYN', 'ACK', SEQ, ACK
 struct tcp_segment *get_new_tcp_seg(sockaddr_in src_addr, sockaddr_in dst_addr,
                                     bool SYN, bool ACK, int seq, int ack) {
   struct tcp_segment *new_tcp_seg = (tcp_segment *)malloc(sizeof(tcp_segment));
@@ -208,7 +208,7 @@ struct tcp_segment *get_new_tcp_seg(sockaddr_in src_addr, sockaddr_in dst_addr,
   if (SYN) {
     new_tcp_seg->flags = (new_tcp_seg->flags + 1) << 1; // SYN is set
   } else {
-    new_tcp_seg->flags = (new_tcp_seg->flags) << 1; 
+    new_tcp_seg->flags = (new_tcp_seg->flags) << 1;
   }
 
   new_tcp_seg->flags = convert_2byte(new_tcp_seg->flags);
@@ -260,6 +260,116 @@ struct packet_info *tcp_seg_to_pkt_info(struct tcp_segment arrived_tcp_seg,
   return arrived_packet;
 }
 
+// update snd_window_remaining and snd_count_remaining in SOCK_INFO
+void update_remaining(struct socket_info *sock_info) {
+  sock_info->snd_window_remaining =
+      sock_info->snd_base + sock_info->snd_window - sock_info->snd_packet;
+  sock_info->snd_window_remaining =
+      sock_info->snd_window_remaining >= BUF_SIZE
+          ? sock_info->snd_window_remaining - BUF_SIZE
+          : sock_info->snd_window_remaining;
+  sock_info->snd_count_remaining =
+      sock_info->snd_next - sock_info->snd_packet < 0
+          ? sock_info->snd_next - sock_info->snd_packet + BUF_SIZE
+          : sock_info->snd_next - sock_info->snd_packet;
+}
+
+// prepare both snd and rcv buffers of NEW_SOCK_INFO,
+// while snd_window info is from ARRIVED_PACKET
+void prepare_buffer(struct socket_info *new_sock_info,
+                    struct packet_info *arrived_packet) {
+  // prepare send buffer
+  new_sock_info->snd_buffer = (int8_t *)malloc(BUF_SIZE);
+  new_sock_info->snd_base = new_sock_info->snd_buffer;
+  new_sock_info->snd_next = new_sock_info->snd_buffer;
+  new_sock_info->snd_packet = new_sock_info->snd_buffer;
+  new_sock_info->snd_empty_size = BUF_SIZE;
+  new_sock_info->snd_count_remaining = 0;
+  new_sock_info->snd_window = arrived_packet->rec_win;
+  new_sock_info->snd_window_remaining = new_sock_info->snd_window;
+  new_sock_info->sent_packets =
+      (struct packet_elem *)malloc(sizeof(struct packet_elem));
+  new_sock_info->sent_packets->prev = new_sock_info->sent_packets;
+  new_sock_info->sent_packets->next = new_sock_info->sent_packets;
+
+  // prepare rcv_buffer
+  new_sock_info->rcv_buffer = (int8_t *)malloc(BUF_SIZE);
+  new_sock_info->rcv_base = new_sock_info->rcv_buffer;
+  new_sock_info->rcv_next = new_sock_info->rcv_buffer;
+  new_sock_info->rcv_window = BUF_SIZE;
+}
+
+// send all available packets in the send_buffer of SOCK_INFO
+struct Packet send_snd_packets(struct socket_info *sock_info) {
+  // do-while
+  int packet_length;
+  int8_t *packet_buf;
+  int8_t *temp;
+  tcp_segment *new_tcp_seg;
+
+  in_addr_t host_ip;
+  in_addr_t peer_ip;
+
+  int n;
+  Packet pkt(1500);
+
+  // count adjusted to not overflow prev step
+  printf("write 3\n");
+  packet_length =
+      min(min(sock_info->snd_count_remaining, sock_info->snd_window_remaining),
+          PKT_DATA_LEN);
+  packet_buf = (int8_t *)malloc(packet_length);
+  n = 0;
+  printf("write 4 %d\n", packet_length);
+  if (sock_info->snd_packet + packet_length >
+      sock_info->snd_buffer + BUF_SIZE) {
+    // if divided within the packet
+    n = sock_info->snd_buffer + BUF_SIZE - sock_info->snd_packet;
+    memcpy(packet_buf, sock_info->snd_packet, n);
+    sock_info->snd_packet = sock_info->snd_buffer;
+  }
+  memcpy(packet_buf, sock_info->snd_packet, packet_length - n);
+  printf("write 5\n");
+
+  // send packet
+  pkt.setSize(54 + packet_length);
+  temp = (int8_t *)malloc(54 + packet_length);
+  new_tcp_seg =
+      get_new_tcp_seg(sock_info->host_addr, sock_info->peer_addr, false, true,
+                      sock_info->next_seq, sock_info->waiting_seq);
+  new_tcp_seg->checksum = 0;
+  host_ip = (sock_info->host_addr.sin_addr.s_addr);
+  peer_ip = (sock_info->peer_addr.sin_addr.s_addr);
+
+  memcpy(temp, new_tcp_seg, 20);
+  memcpy(temp + 20, packet_buf, packet_length);
+  new_tcp_seg->checksum = htons(~NetworkUtil::tcp_sum(
+      host_ip, peer_ip, (uint8_t *)temp, 20 + packet_length));
+  free(temp);
+  pkt.writeData(26, &host_ip, 4);
+  pkt.writeData(30, &peer_ip, 4);
+  pkt.writeData(34, new_tcp_seg, 20);
+  pkt.writeData(54, packet_buf, packet_length);
+  // append sent_packet_elem at the end of the list
+  struct packet_elem *sent_packet_elem =
+      (struct packet_elem *)malloc(sizeof(struct packet_elem));
+  sent_packet_elem->ack = sock_info->next_seq;
+  sent_packet_elem->data_size = packet_length;
+  sent_packet_elem->packet = &pkt;
+
+  sent_packet_elem->next = sock_info->sent_packets;
+  sent_packet_elem->prev = sock_info->sent_packets->prev;
+  sock_info->sent_packets->prev->next = sent_packet_elem;
+  sock_info->sent_packets->prev = sent_packet_elem;
+  // update status
+  sock_info->next_seq += packet_length;
+  sock_info->snd_packet += packet_length;
+  update_remaining(sock_info);
+  free(packet_buf);
+
+  return pkt;
+}
+
 TCPAssignment::TCPAssignment(Host &host)
     : HostModule("TCP", host), RoutingInfoInterface(host),
       SystemCallInterface(AF_INET, IPPROTO_TCP, host),
@@ -302,7 +412,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
 
   int fd;
   int backlog;
-  
+
   sockaddr *temp_sockaddr;
   in_addr_t host_ip;
   in_addr_t peer_ip;
@@ -338,6 +448,8 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
   int n;
   int8_t *buf;
   int8_t *temp;
+  int8_t *packet_buf;
+  int packet_length; // current packet length
 
   switch (param.syscallNumber) {
   case SOCKET:
@@ -387,7 +499,6 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
       free(sock_info->snd_buffer);
       free(sock_info->rcv_buffer);
       // free sent packets list
-      ;
     }
     // handle addr_entry
     if (temp_addr_entry != NULL) {
@@ -411,20 +522,20 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     // else if (sock_info->rcv_base == sock_info->rcv_next) block system call;
     // else
 
-    count = min(
-      (sock_info->rcv_next < sock_info->rcv_base ?
-        sock_info->rcv_next + BUF_SIZE :
-        sock_info->rcv_next) - sock_info->rcv_base,
-      count
-    );
+    count = min((sock_info->rcv_next < sock_info->rcv_base
+                     ? sock_info->rcv_next + BUF_SIZE
+                     : sock_info->rcv_next) -
+                    sock_info->rcv_base,
+                count);
 
-    if (sock_info->rcv_buffer + count >= sock_info->rcv_buffer + BUF_SIZE) {
+    if (sock_info->rcv_base + count >= sock_info->rcv_buffer + BUF_SIZE) {
       n = sock_info->rcv_buffer + BUF_SIZE - sock_info->rcv_base;
       memcpy(buf, sock_info->rcv_base, n);
       sock_info->rcv_base = sock_info->rcv_buffer;
       memcpy(buf + n, sock_info->rcv_base, count - n);
       sock_info->rcv_base += (count - n);
     } else {
+      n = count;
       memcpy(buf, sock_info->rcv_base, n);
       sock_info->rcv_base += n;
     }
@@ -437,15 +548,15 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     // this->syscall_write(syscallUUID, pid, std::get<int>(param.params[0]),
     //                     std::get<void *>(param.params[1]),
     //                     std::get<int>(param.params[2]));
-    // int write(int fd, const void *buf, size_t cound
+    // int write(int fd, const void *buf, size_t count
     fd = std::get<int>(param.params[0]);
     sock_info = get_socket_info_by_fd(all_sockets, pid, fd);
     buf = (int8_t *)std::get<void *>(param.params[1]);
     count = std::get<int>(param.params[2]);
 
     if (sock_info->snd_empty_size < count) {
-      // block;
-      sock_info->self_syscall->seq = convert_4byte(new_tcp_seg->seq);
+      // if write length is longer than buffer, block
+      sock_info->self_syscall->seq = convert_4byte(sock_info->next_seq);
       sock_info->self_syscall->uuid = syscallUUID;
       sock_info->self_syscall->self_socket = sock_info;
       sock_info->self_syscall->temp_sockaddr = NULL;
@@ -453,57 +564,55 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
       append_syscall_entry(blocked_syscalls, sock_info->self_syscall);
     } else {
       // copy data to send buffer
-      if (sock_info->snd_next + count < sock_info->snd_buffer + BUF_SIZE) {
+      if (sock_info->snd_next > sock_info->snd_base) {
+        // not divided
+        if (sock_info->snd_next + count <= sock_info->snd_buffer + BUF_SIZE) {
+          // back space remaining
+          memcpy(sock_info->snd_next, buf, count);
+          sock_info->snd_next += count;
+        } else if (sock_info->snd_next + count <=
+                   sock_info->snd_base + BUF_SIZE) {
+          // total space remaining
+          n = (sock_info->snd_buffer + BUF_SIZE) - (sock_info->snd_next);
+          memcpy(sock_info->snd_next, buf, n);
+          memcpy(sock_info->snd_buffer, buf + n, count - n);
+          sock_info->snd_next = sock_info->snd_buffer + count - n;
+        } else {
+          // lack of space
+          n = (sock_info->snd_buffer + BUF_SIZE) - (sock_info->snd_next);
+          memcpy(sock_info->snd_next, buf, n);
+          memcpy(sock_info->snd_buffer, buf + n,
+                 sock_info->snd_base - sock_info->snd_buffer);
+          count = n + sock_info->snd_base - sock_info->snd_buffer;
+          sock_info->snd_next = sock_info->snd_base;
+        }
+      } else if (sock_info->snd_next < sock_info->snd_base) {
+        // divided
+        if (sock_info->snd_next + count > sock_info->snd_base) {
+          // lack of space
+          count = sock_info->snd_base - sock_info->snd_next;
+        }
+        // both cases
         memcpy(sock_info->snd_next, buf, count);
         sock_info->snd_next += count;
       } else {
-        n = (sock_info->snd_next + count) - (sock_info->snd_buffer + BUF_SIZE);
-        memcpy(sock_info->snd_next, buf, n);
-        memcpy(sock_info->snd_buffer, buf + n, count - n);
-        sock_info->snd_next = sock_info->snd_buffer + count - n;
+        // no space left or all space left
+        memcpy(sock_info->snd_next, buf, count);
+        sock_info->snd_next += count;
       }
 
-      if (sock_info->snd_next < sock_info->snd_base + sock_info->snd_window) {
-        // send packet
-        pkt.setSize(54 + count);
-        temp = (int8_t *)malloc(54 + count);
-        new_tcp_seg = get_new_tcp_seg(sock_info->host_addr, sock_info->peer_addr,
-                                      false, true, sock_info->next_seq, sock_info->waiting_seq);
-        new_tcp_seg->checksum = 0;
+      update_remaining(sock_info);
 
-        host_ip = (sock_info->host_addr.sin_addr.s_addr);
-        peer_ip = (sock_info->peer_addr.sin_addr.s_addr);
+      printf("%d %d\n", sock_info->snd_window_remaining,
+             sock_info->snd_count_remaining);
 
-        memcpy(temp, new_tcp_seg, 20);
-        memcpy(temp + 20, std::get<void *>(param.params[1]), count);
-        new_tcp_seg->checksum = htons(
-        ~NetworkUtil::tcp_sum(host_ip, peer_ip, (uint8_t *)temp, 20 + count));
-
-        free(temp);
-
-        pkt.writeData(26, &host_ip, 4);
-        pkt.writeData(30, &peer_ip, 4);
-        pkt.writeData(34, new_tcp_seg, 20);
-        pkt.writeData(54, std::get<void *>(param.params[1]), count);
-
-
+      // sending packets
+      while (sock_info->snd_window_remaining > 0 &&
+             sock_info->snd_count_remaining > 0) {
+        pkt = send_snd_packets(sock_info);
         sendPacket("IPv4", pkt);
-        sock_info->snd_base = sock_info->snd_next;
-        sock_info->next_seq += count;
-        struct packet_elem *sent_packet_elem = (struct packet_elem *)malloc(sizeof(struct packet_elem));
-        sent_packet_elem->ack = sock_info->next_seq;
-        sent_packet_elem->data_size = count;
-        sent_packet_elem->packet = &pkt;
-        
-        sent_packet_elem->prev = sock_info->sent_packets;
-        sent_packet_elem->next = sock_info->sent_packets->next;
-        sock_info->sent_packets->next->prev = sent_packet_elem;
-        sock_info->sent_packets->next = sent_packet_elem;
-
-        returnSystemCall(syscallUUID, count);
-      } else {
-        returnSystemCall(syscallUUID, count);
       }
+      returnSystemCall(syscallUUID, count);
     }
 
     break;
@@ -779,17 +888,13 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
 }
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
-  // // Remove below
-  // (void)fromModule;
-  // (void)packet;
+
   tcp_segment arrived_tcp_seg;
   ipv4_t src_ip;
   ipv4_t dst_ip;
-  
+
   // read as arrived_tcp_seg and store in arrived_packet
   packet.readData(34, &arrived_tcp_seg, sizeof(tcp_segment));
-  // packet_info *arrived_packet = (packet_info *)malloc(sizeof(packet_info));
-  // memset(arrived_packet, 0, sizeof(arrived_packet));
 
   int32_t src_addr;
   int32_t dst_addr;
@@ -802,7 +907,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   // write packet info in arrived packet
   socket_info *self_sock_info =
       get_socket_info_by_addr(all_sockets, &arrived_packet->dst_addr);
-
+  printf("packet received %d\n", self_sock_info->tcp_status);
   int new_pkt_seq;
 
   Packet pkt(54);
@@ -810,10 +915,40 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       (packet_info *)malloc(sizeof(packet_info));
 
   if (self_sock_info == NULL) {
+    // error
   }
   if (self_sock_info->tcp_status == TCP_CLOSE) {
     // TCP_CLOSE
-    ;
+    // ack packet arrived
+    printf("tcp_close %d\n", arrived_packet->ack);
+    for (struct packet_elem *cur = self_sock_info->sent_packets->next;
+         cur != self_sock_info->sent_packets; cur = cur->next) {
+      if (arrived_packet->ack == cur->ack) {
+        struct packet_elem *acked_packet = self_sock_info->sent_packets->next;
+        self_sock_info->sent_packets->next = acked_packet->next;
+        self_sock_info->sent_packets->next->prev = self_sock_info->sent_packets;
+        self_sock_info->snd_base += acked_packet->data_size;
+        if (self_sock_info->snd_base > self_sock_info->snd_buffer + BUF_SIZE) {
+          self_sock_info->snd_base -= BUF_SIZE;
+        }
+        self_sock_info->snd_empty_size += acked_packet->data_size;
+        self_sock_info->snd_window = arrived_packet->rec_win;
+        if (self_sock_info->snd_base != self_sock_info->snd_next) {
+          // send packets
+          update_remaining(self_sock_info);
+
+          printf("%d %d\n", self_sock_info->snd_window_remaining,
+                 self_sock_info->snd_count_remaining);
+
+          // sending packets
+          while (self_sock_info->snd_window_remaining > 0 &&
+                 self_sock_info->snd_count_remaining > 0) {
+            pkt = send_snd_packets(self_sock_info);
+            sendPacket("IPv4", pkt);
+          }
+        }
+      }
+    }
   } else if (self_sock_info->tcp_status == TCP_LISTEN ||
              self_sock_info->tcp_status == TCP_SYN_RECV) {
     if (arrived_packet->SYN && !arrived_packet->ACK) {
@@ -823,9 +958,9 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       }
 
       self_sock_info->rand_seq = rand();
-      struct tcp_segment *new_tcp_seg =
-          get_new_tcp_seg(arrived_packet->dst_addr, arrived_packet->src_addr,
-                          true, true, self_sock_info->rand_seq, arrived_packet->seq+1);
+      struct tcp_segment *new_tcp_seg = get_new_tcp_seg(
+          arrived_packet->dst_addr, arrived_packet->src_addr, true, true,
+          self_sock_info->rand_seq, arrived_packet->seq + 1);
 
       pkt.writeData(26, &arrived_packet->dst_addr.sin_addr.s_addr, 4);
       pkt.writeData(30, &arrived_packet->src_addr.sin_addr.s_addr, 4);
@@ -884,22 +1019,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
           memcpy(&new_sock_info->peer_addr, &sender_packet->src_addr,
                  sizeof(sockaddr_in));
 
-          // prepare send buffer
-          new_sock_info->snd_buffer = (int8_t *)malloc(BUF_REAL_SIZE);
-          new_sock_info->snd_base = new_sock_info->snd_buffer;
-          new_sock_info->snd_next = new_sock_info->snd_buffer;
-          new_sock_info->snd_empty_size = BUF_SIZE;
-          new_sock_info->snd_window = arrived_packet->rec_win;
-
-          new_sock_info->sent_packets = (struct packet_elem *)malloc(sizeof(struct packet_elem));
-          new_sock_info->sent_packets->prev = new_sock_info->sent_packets;
-          new_sock_info->sent_packets->next = new_sock_info->sent_packets;
-
-          // prepare rcv_buffer
-          new_sock_info->rcv_buffer = (int8_t *)malloc(BUF_REAL_SIZE);
-          new_sock_info->rcv_base = new_sock_info->rcv_buffer;
-          new_sock_info->rcv_next = new_sock_info->rcv_buffer;
-          new_sock_info->rcv_window = BUF_SIZE;
+          prepare_buffer(new_sock_info, arrived_packet);
 
           // return
           *(self_sock_info->self_syscall->sock_len_p) = sizeof(sockaddr_in);
@@ -924,31 +1044,16 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
         // set tcp status
         self_sock_info->tcp_status = TCP_ESTABLISHED;
 
-        // prepare send buffer
-        self_sock_info->snd_buffer = (int8_t *)malloc(BUF_REAL_SIZE);
-        self_sock_info->snd_base = self_sock_info->snd_buffer;
-        self_sock_info->snd_next = self_sock_info->snd_buffer;
-        self_sock_info->snd_empty_size = BUF_SIZE;
-        self_sock_info->snd_window = arrived_packet->rec_win;
-
-        self_sock_info->sent_packets = (struct packet_elem *)malloc(sizeof(struct packet_elem));
-        self_sock_info->sent_packets->prev = self_sock_info->sent_packets;
-        self_sock_info->sent_packets->next = self_sock_info->sent_packets;
-
-        // prepare rcv_buffer
-        self_sock_info->rcv_buffer = (int8_t *)malloc(BUF_REAL_SIZE);
-        self_sock_info->rcv_base = self_sock_info->rcv_buffer;
-        self_sock_info->rcv_next = self_sock_info->rcv_buffer;
-        self_sock_info->rcv_window = BUF_SIZE;
+        prepare_buffer(self_sock_info, arrived_packet);
 
         if (arrived_packet->ack != self_sock_info->rand_seq + 1) {
           return;
         }
 
         // sending TWH3
-        struct tcp_segment *new_tcp_seg =
-            get_new_tcp_seg(arrived_packet->dst_addr, arrived_packet->src_addr,
-                            false, true, arrived_packet->ack, arrived_packet->seq + 1);
+        struct tcp_segment *new_tcp_seg = get_new_tcp_seg(
+            arrived_packet->dst_addr, arrived_packet->src_addr, false, true,
+            arrived_packet->ack, arrived_packet->seq + 1);
 
         pkt.writeData(26, &arrived_packet->dst_addr.sin_addr.s_addr, 4);
         pkt.writeData(30, &arrived_packet->src_addr.sin_addr.s_addr, 4);
@@ -964,13 +1069,12 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       ;
     }
   } else if (self_sock_info->tcp_status == TCP_ESTABLISHED) {
-
-
+    printf("aaa\n");
     int data_len = packet.getSize() - 54;
     if (data_len == 0) {
       // ack packet arrived
       if (arrived_packet->ack == self_sock_info->sent_packets->next->ack) {
-        struct packet_elem* acked_packet = self_sock_info->sent_packets->next;
+        struct packet_elem *acked_packet = self_sock_info->sent_packets->next;
         self_sock_info->sent_packets->next = acked_packet->next;
         self_sock_info->sent_packets->next->prev = self_sock_info->sent_packets;
         self_sock_info->snd_base += acked_packet->data_size;
@@ -982,38 +1086,48 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
         if (self_sock_info->snd_base != self_sock_info->snd_next) {
           // send data
         }
+
+        // send packets
+        update_remaining(self_sock_info);
+
+        printf("%d %d\n", self_sock_info->snd_window_remaining,
+               self_sock_info->snd_count_remaining);
+
+        // sending packets
+        while (self_sock_info->snd_window_remaining > 0 &&
+               self_sock_info->snd_count_remaining > 0) {
+          pkt = send_snd_packets(self_sock_info);
+          sendPacket("IPv4", pkt);
+        }
       } else {
         ;
       }
-      
+
     } else {
       // data packet received
-
-      // if (arrived_packet->seq != self_sock_info->waiting_seq) {
-        
-      // } else if (checksum not match) {
-
-      // } else 
       assert(data_len <= self_sock_info->rcv_window);
-      
+
       packet.readData(54, self_sock_info->rcv_next, data_len);
       self_sock_info->rcv_next += data_len;
       if (self_sock_info->rcv_next >= self_sock_info->rcv_buffer + BUF_SIZE) {
-        data_len -= self_sock_info->rcv_next - (self_sock_info->rcv_buffer + BUF_SIZE);
+        data_len -=
+            self_sock_info->rcv_next - (self_sock_info->rcv_buffer + BUF_SIZE);
         self_sock_info->rcv_next -= BUF_SIZE;
-        packet.readData(54 + data_len, self_sock_info->rcv_buffer, self_sock_info->rcv_next - self_sock_info->rcv_buffer);
+        packet.readData(54 + data_len, self_sock_info->rcv_buffer,
+                        self_sock_info->rcv_next - self_sock_info->rcv_buffer);
       }
       self_sock_info->waiting_seq = arrived_packet->seq + data_len;
       self_sock_info->rcv_window -= data_len;
 
       // send ack packet
-      struct tcp_segment *new_tcp_seg =
-          get_new_tcp_seg(arrived_packet->dst_addr, arrived_packet->src_addr,
-                          false, true, self_sock_info->next_seq, self_sock_info->waiting_seq);
+      struct tcp_segment *new_tcp_seg = get_new_tcp_seg(
+          arrived_packet->dst_addr, arrived_packet->src_addr, false, true,
+          self_sock_info->next_seq, self_sock_info->waiting_seq);
       new_tcp_seg->rec_win = self_sock_info->rcv_window;
-      new_tcp_seg->checksum = htons(
-      ~NetworkUtil::tcp_sum(self_sock_info->host_addr.sin_addr.s_addr, self_sock_info->peer_addr.sin_addr.s_addr,
-                            (uint8_t *)new_tcp_seg, 20));
+      new_tcp_seg->checksum =
+          htons(~NetworkUtil::tcp_sum(self_sock_info->host_addr.sin_addr.s_addr,
+                                      self_sock_info->peer_addr.sin_addr.s_addr,
+                                      (uint8_t *)new_tcp_seg, 20));
 
       pkt.writeData(26, &arrived_packet->dst_addr.sin_addr.s_addr, 4);
       pkt.writeData(30, &arrived_packet->src_addr.sin_addr.s_addr, 4);
@@ -1023,7 +1137,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       sendPacket("IPv4", pkt);
     }
   } else {
-    
+
     // error
     ;
   }
