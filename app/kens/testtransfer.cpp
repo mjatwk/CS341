@@ -132,6 +132,7 @@ protected:
         send_buffer[k] = rand_d(rand_e);
 
       if (is_send) {
+        printf("wall write\n");
         int remaining = buffer_size;
         int write_byte = 0;
         while ((write_byte =

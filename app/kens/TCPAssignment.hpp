@@ -24,6 +24,7 @@ namespace E {
 
 #define BUF_REAL_SIZE (1 << 22) // 4MB; 2MB + at min PKT_DATA_LEN
 #define BUF_SIZE (1 << 21)      // 2MB
+#define PKT_HEADER_LEN 54       // packet header length
 #define PKT_DATA_LEN 1460       // same as MSS
 #define INIT_RTT 100000000      // 100 ms
 #define ALPHA 0.125
@@ -42,6 +43,22 @@ enum tcp_stat {
   TCP_LISTEN, // listen
   TCP_CLOSING /* now a valid state */
 };
+
+// enum SystemCall {
+//     SOCKET = 1,
+//     CLOSE,
+//     READ,
+//     WRITE,
+//     CONNECT,
+//     LISTEN,
+//     ACCEPT,
+//     BIND,
+//     GETSOCKNAME,
+//     GETPEERNAME,
+
+//     NSLEEP,
+//     GETTIMEOFDAY,
+//   };
 
 struct socket_info {
   int fd;
@@ -99,12 +116,15 @@ struct addr_entry {
 };
 
 struct syscall_entry {
+  int syscall_num;
   UUID uuid;
   socket_info *self_socket;
   int new_fd;
   sockaddr *temp_sockaddr;
   socklen_t *sock_len_p;
   int seq;
+  int read_byte;
+  int8_t* usr_buffer;
 
   syscall_entry *prev;
   syscall_entry *next;
