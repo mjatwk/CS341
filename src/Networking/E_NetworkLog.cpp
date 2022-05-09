@@ -11,7 +11,7 @@
 namespace E {
 
 uint64_t NetworkLog::defaultLevel = (
-    (1 << SYSCALL_RAISED) |
+    // (1 << SYSCALL_RAISED) |
     //(1 << SYSCALL_FINISHED) |
     //(1 << PACKET_ALLOC) |
     //(1 << PACKET_CLONE) |
@@ -21,7 +21,7 @@ uint64_t NetworkLog::defaultLevel = (
     // (1 << PACKET_TO_HOST) |
     // (1 << PACKET_FROM_HOST) |
     //(1 << PACKET_QUEUE) |
-    (1 << TCP_LOG) |
+    // (1 << TCP_LOG) |
     0UL);
 
 NetworkLog::NetworkLog(System &system) : system(system) {
