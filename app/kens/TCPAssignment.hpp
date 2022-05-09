@@ -84,9 +84,9 @@ struct socket_info {
   int waiting_seq;
 
   // timer
-  int estimated_rtt = INIT_RTT;
-  int dev_rtt = 0;
-  int timeout_interval = estimated_rtt;
+  int estimated_rtt;
+  int dev_rtt;
+  int timeout_interval;
 
   // snd_buf
   int8_t *snd_buffer;
@@ -164,6 +164,7 @@ struct packet_elem {
 
   int ack;
   int data_size;
+  UUID timer;
 
   Packet *packet;
 };
