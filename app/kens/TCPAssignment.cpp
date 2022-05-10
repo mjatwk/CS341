@@ -1037,7 +1037,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
 
   if (self_sock_info == NULL)
     self_sock_info = get_socket_info_by_host_and_peer(all_sockets, &arrived_packet->dst_addr, NULL);
-
   if (self_sock_info == NULL) // ERROR
     return;
   
@@ -1055,6 +1054,20 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
     struct packet_elem *acked_packet = self_sock_info->sent_packets->next;
     if (acked_packet == self_sock_info->sent_packets) {
       // NO sent packets
+      if (self_sock_info->tcp_status == TCP_ESTABLISHED && arrived_packet->SYN) {
+        // sending TWH3
+        struct tcp_segment *new_tcp_seg = get_new_tcp_seg(
+            arrived_packet->dst_addr, arrived_packet->src_addr, false, true,
+            arrived_packet->ack, arrived_packet->seq + 1);
+
+        pkt.writeData(26, &arrived_packet->dst_addr.sin_addr.s_addr, 4);
+        pkt.writeData(30, &arrived_packet->src_addr.sin_addr.s_addr, 4);
+        pkt.writeData(34, new_tcp_seg, 20);
+        self_sock_info->waiting_seq = arrived_packet->seq + 1;
+        self_sock_info->next_seq = self_sock_info->rand_seq + 1;
+        free(new_tcp_seg);
+        sendPacket("IPv4", std::move(pkt.clone()));
+      }
       return;
     }
     self_sock_info->snd_window = arrived_packet->rec_win;
@@ -1221,6 +1234,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
     }
   } else if (arrived_packet->SYN && arrived_packet->ACK) {
     // TWH2    
+    printf("hi\n");
     if (self_sock_info->self_syscall->next != NULL) {
       // set tcp status
       self_sock_info->tcp_status = TCP_ESTABLISHED;
