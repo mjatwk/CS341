@@ -1054,8 +1054,11 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
     struct packet_elem *acked_packet = self_sock_info->sent_packets->next;
     if (acked_packet == self_sock_info->sent_packets) {
       // NO sent packets
-      if (self_sock_info->tcp_status == TCP_ESTABLISHED && arrived_packet->SYN) {
+      if (arrived_packet->SYN && arrived_packet->ack == self_sock_info->rand_seq + 1) {
         // sending TWH3
+        self_sock_info->tcp_status = TCP_ESTABLISHED;
+        prepare_buffer(self_sock_info, arrived_packet);
+
         struct tcp_segment *new_tcp_seg = get_new_tcp_seg(
             arrived_packet->dst_addr, arrived_packet->src_addr, false, true,
             arrived_packet->ack, arrived_packet->seq + 1);
@@ -1067,6 +1070,10 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
         self_sock_info->next_seq = self_sock_info->rand_seq + 1;
         free(new_tcp_seg);
         sendPacket("IPv4", std::move(pkt.clone()));
+        if (self_sock_info->self_syscall->next != NULL) {
+          returnSystemCall(self_sock_info->self_syscall->uuid, 0);
+          remove_syscall_entry(self_sock_info->self_syscall);
+        }
       }
       return;
     }
@@ -1237,13 +1244,13 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
     printf("hi\n");
     if (self_sock_info->self_syscall->next != NULL) {
       // set tcp status
-      self_sock_info->tcp_status = TCP_ESTABLISHED;
-
-      prepare_buffer(self_sock_info, arrived_packet);
 
       if (arrived_packet->ack != self_sock_info->rand_seq + 1) {
         return;
       }
+
+      self_sock_info->tcp_status = TCP_ESTABLISHED;
+      prepare_buffer(self_sock_info, arrived_packet);
 
       // sending TWH3
       struct tcp_segment *new_tcp_seg = get_new_tcp_seg(
@@ -1258,6 +1265,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       free(new_tcp_seg);
       sendPacket("IPv4", std::move(pkt.clone()));
       returnSystemCall(self_sock_info->self_syscall->uuid, 0);
+      remove_syscall_entry(self_sock_info->self_syscall);
     }
   } else if (!arrived_packet->SYN && arrived_packet->ACK) {
     // DATA, DATA_ACK, FIN_ACK, FIN 
