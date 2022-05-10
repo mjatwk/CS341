@@ -698,6 +698,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
         pkt = send_snd_packets(sock_info);
         new_packet_elem = store_packet_elem(sock_info, pkt.getSize() - 54, pkt);
         new_packet_elem->timer = addTimer(sock_info, sock_info->timeout_interval);
+        new_packet_elem->sent_time = getCurrentTime();
         // printf("write 7\n");
         sendPacket("IPv4", std::move(pkt));
       }
@@ -771,6 +772,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid,
     sock_info->next_seq = sock_info->rand_seq + 1;
     new_packet_elem = store_packet_elem(sock_info, 0, pkt);
     new_packet_elem->timer = addTimer(sock_info, sock_info->timeout_interval);
+    new_packet_elem->sent_time = getCurrentTime();
     sendPacket("IPv4", std::move(pkt));
 
     sock_info->tcp_status = TCP_SYN_SENT;
@@ -1006,7 +1008,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   packet.readData(26, &src_addr, 4);
   packet.readData(30, &dst_addr, 4);
   packet.readData(34, &arrived_tcp_seg, sizeof(tcp_segment));
-  
   // read as arrived_tcp_seg and store in arrived_packet
   packet_info *arrived_packet =
       tcp_seg_to_pkt_info(arrived_tcp_seg, src_addr, dst_addr);
@@ -1043,7 +1044,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   
   if (self_sock_info->tcp_status == TCP_CLOSE)
     return;
-  
+
   if (arrived_packet->FIN) {
     return;
   }
@@ -1061,12 +1062,15 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       self_sock_info->sent_packets->next = acked_packet->next;
       self_sock_info->sent_packets->next->prev = self_sock_info->sent_packets;
       cancelTimer(acked_packet->timer);
+      int now = getCurrentTime();
+      // update_rtt(self_sock_info, now-acked_packet->sent_time);
       free(acked_packet);
     } else if (arrived_packet->ack > acked_packet->ack) {
       // ack not first packet
       for (struct packet_elem* cur = self_sock_info->sent_packets->next; cur != self_sock_info->sent_packets; cur=cur->next) {
         cancelTimer(cur->timer);
         cur->timer = addTimer(self_sock_info, self_sock_info->timeout_interval);
+        cur->sent_time = getCurrentTime();
         // cloned_packet = cur->packet.clone();
         sendPacket("IPv4", std::move(cur->packet->clone()));
       }

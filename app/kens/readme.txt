@@ -1,4 +1,21 @@
 // 2022 Spring CS341 Introduction to Computer Networks 
+// readme.txt on Lab3
+// Team 12: Minjun Kim(20190100), Hyewon Hwang(20200722)
+
+>> Added / Modified data structures
+1. packet_elem: send and receive in packet units
+2. socket_info: send_buffer, receive_buffer, timer properties
+
+>> Implementing progress of Lab 3
+1. Reliable: read(), write(), packetArrived()
+    - read(): read count bytes from receive_buffer, if received_data is not yet as count bytes, read as given and call read() again 
+    - write(): move to send_buffer and send if send_window has vacant space, blocked until send_window has remaining space
+    - packetArrived(): if DATA packet arrives, copy to receive_buffer and send DATA-ACK packet, if DATA-ACK packet arrives free send_buffer and packet_elem 
+2. Unreliable: timer, checksum, re-send packet if not acked
+    - timer: set timer if DATA packet is sent
+    - checksum: ignore if checksum bytes does not match with calculated checksum
+    - re-send packet: if DATA-ACK packet does not arrive for given DATA packet until the timer ends, re-send it
+
 // readme.txt on Lab2
 // Team 12: Minjun Kim(20190100), Hyewon Hwang(20200722)
 

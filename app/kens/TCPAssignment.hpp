@@ -164,6 +164,7 @@ struct packet_elem {
   int ack;
   int data_size;
   UUID timer;
+  int sent_time;
 
   Packet *packet;
 };
