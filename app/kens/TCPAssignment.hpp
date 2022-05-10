@@ -45,7 +45,7 @@ enum tcp_stat {
 };
 
 // enum SystemCall {
-//     SOCKET = 1,
+//     SOCKET = 0,
 //     CLOSE,
 //     READ,
 //     WRITE,
@@ -55,8 +55,7 @@ enum tcp_stat {
 //     BIND,
 //     GETSOCKNAME,
 //     GETPEERNAME,
-
-//     NSLEEP,
+//     NSLEEP = 10,
 //     GETTIMEOFDAY,
 //   };
 

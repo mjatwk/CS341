@@ -155,3 +155,7 @@ struct packet_info *tcp_seg_to_pkt_info(struct tcp_segment arrived_tcp_seg,int32
 2. Each accepted sockets (the sockets newly made by accept()) would have different peer_addr since they are connected to different sockets
 3. Then if the accepting socket does not have peer_addr, we might distinguish which socket is connected to the corresponding peer_addr -> how bout search using both host_addr and peer_addr?
 4. If with such searching methods, we can even check whether the packet is for connect-3wayhandshake or read/write, only by looking at the peer_addr, since packets with peer_addr cannot accept and vise versa
+
+
+# REMAINING
+1. update rtt
