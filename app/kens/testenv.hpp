@@ -24,7 +24,9 @@
 #include "TCPAssignment.hpp"
 #include <gtest/gtest.h>
 
-#define RANDOM_SEED_DEFAULT 1614233283
+#define RANDOM_SEED_DEFAULT 3
+
+// #define RANDOM_SEED_DEFAULT 1614233283
 
 using namespace E;
 
