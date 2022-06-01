@@ -2,6 +2,8 @@
 // readme.txt on Lab3
 // Team 12: Minjun Kim(20190100), Hyewon Hwang(20200722)
 
+// IMPORTANT: USAGE OF 1 TOKEN FOR EACH OF MEMBERS FOR LAB3
+
 >> Added / Modified data structures
 1. packet_elem: send and receive in packet units
 2. socket_info: send_buffer, receive_buffer, timer properties
