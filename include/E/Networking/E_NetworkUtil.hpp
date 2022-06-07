@@ -54,7 +54,7 @@ public:
       array[k] = (val >> (8 * k)) & 0xFF;
     }
     return array;
-  };
+  }
 
   /**
    * Converts a std::array to uint64_t.

@@ -33,14 +33,14 @@ int EchoAssignment::serverMain(const char *bind_ip, int port,
   socket_addr.sin_family = AF_INET;
   socket_addr.sin_port = port;
   inet_aton(bind_ip, &socket_addr.sin_addr);
-  
-  if (bind(socket_fd, (const sockaddr *)&socket_addr, 
-      sizeof(struct sockaddr_in)) == -1)
+
+  if (bind(socket_fd, (const sockaddr *)&socket_addr,
+           sizeof(struct sockaddr_in)) == -1)
     return -1;
 
   if (listen(socket_fd, 5) == -1)
     return -1;
-  
+
   int client_fd;
   socklen_t socket_len = sizeof(sockaddr_in);
 
@@ -57,7 +57,8 @@ int EchoAssignment::serverMain(const char *bind_ip, int port,
       return -1;
     char c_address[16];
     memset(c_address, 0, 16);
-    if (inet_ntop(AF_INET, &client_addr.sin_addr, c_address, c_sock_len) == NULL)
+    if (inet_ntop(AF_INET, &client_addr.sin_addr, c_address, c_sock_len) ==
+        NULL)
       return -1;
 
     struct sockaddr_in server_addr;
@@ -66,7 +67,8 @@ int EchoAssignment::serverMain(const char *bind_ip, int port,
       return -1;
     char s_address[16];
     memset(s_address, 0, 16);
-    if (inet_ntop(AF_INET, &server_addr.sin_addr, s_address, s_sock_len) == NULL)
+    if (inet_ntop(AF_INET, &server_addr.sin_addr, s_address, s_sock_len) ==
+        NULL)
       return -1;
 
     char size[11];
@@ -74,38 +76,38 @@ int EchoAssignment::serverMain(const char *bind_ip, int port,
     if (read(client_fd, size, 11) == -1)
       return -1;
     int remaining_n = atoi(size);
-    
+
     char *request = (char *)calloc(1, remaining_n + 1);
     if (read(client_fd, request, remaining_n) == -1)
       return -1;
 
     memset(size, 0, 11);
-    if (!strcmp("hello", request)){
+    if (!strcmp("hello", request)) {
       sprintf(size, "%d", (int)strlen(server_hello));
       if (write(client_fd, size, 11) == -1)
         return -1;
       if (write(client_fd, server_hello, strlen(server_hello)) == -1)
         return -1;
-    }else if (!strcmp("whoami", request)){
+    } else if (!strcmp("whoami", request)) {
       sprintf(size, "%d", (int)strlen(c_address));
       if (write(client_fd, size, 11) == -1)
         return -1;
       if (write(client_fd, c_address, strlen(c_address)) == -1)
         return -1;
-    }else if (!strcmp("whoru", request)){
+    } else if (!strcmp("whoru", request)) {
       sprintf(size, "%d", (int)strlen(s_address));
       if (write(client_fd, size, 11) == -1)
         return -1;
       if (write(client_fd, s_address, strlen(s_address)) == -1)
         return -1;
-    }else{
+    } else {
       sprintf(size, "%d", (int)strlen(request));
       if (write(client_fd, size, 11) == -1)
         return -1;
       if (write(client_fd, request, strlen(request)) == -1)
         return -1;
     }
-    
+
     submitAnswer(c_address, request);
     free(request);
     close(client_fd);
@@ -133,7 +135,7 @@ int EchoAssignment::clientMain(const char *server_ip, int port,
 
   if (connect(socket_fd, (const sockaddr *)&socket_addr, socket_len) == -1)
     return -1;
-  
+
   struct sockaddr_in server_addr;
   socklen_t s_socklen = sizeof(sockaddr);
   if (getpeername(socket_fd, (sockaddr *)&server_addr, &s_socklen) == -1)

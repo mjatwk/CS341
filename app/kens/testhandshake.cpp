@@ -56,6 +56,7 @@ protected:
 
     long accept_time = atol(env["ACCEPT_TIME"].c_str());
     usleep(accept_time);
+
     int accept_count = atoi(env["ACCEPT_COUNT"].c_str());
     int expected_accept = atoi(env["EXPECT_ACCEPT"].c_str());
     long accept_period = atoi(env["ACCEPT_PERIOD"].c_str());
@@ -155,6 +156,7 @@ protected:
         for (int other_port : client_ports) {
           EXPECT_NE((int)temp_addr.sin_port, other_port);
         }
+
         client_sockets.push_back(client_socket);
         client_ports.push_back(temp_addr.sin_port);
       }

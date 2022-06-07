@@ -92,7 +92,7 @@ struct socket_info {
   int8_t *snd_base;   // unacked data start pointer = send window base
   int8_t *snd_next;   // where to append next data
   int8_t *snd_packet; // where to start sending next packet
-  int snd_empty_size; 
+  int snd_empty_size;
   int snd_window; // send window size
   int snd_count_remaining;
   int snd_window_remaining;
@@ -123,7 +123,7 @@ struct syscall_entry {
   socklen_t *sock_len_p;
   int seq;
   int read_byte;
-  int8_t* usr_buffer;
+  int8_t *usr_buffer;
 
   syscall_entry *prev;
   syscall_entry *next;
