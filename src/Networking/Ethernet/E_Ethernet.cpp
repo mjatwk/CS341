@@ -56,7 +56,6 @@ void Ethernet::packetArrived(std::string fromModule, Packet &&packet) {
       packet.writeData(0, dst.value().data(), 6);
 
       packet.writeData(6, src.value().data(), 6);
-
     }
     this->sendPacket("Host", std::move(packet));
   } else if (fromModule.compare("IPv6") == 0) {
