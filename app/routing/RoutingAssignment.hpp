@@ -25,6 +25,15 @@ constexpr Size CostLCM = calc_cost_lcm(MaxCost);
 #error "Compiler must support packing"
 #endif
 
+// Newly added from here
+struct dist_entry {
+  ipv4_t ipv4;
+  int32_t metric; // distance towards ipv4
+  struct dist_entry *prev;
+  struct dist_entry *next;
+};
+
+// Given as template below
 struct rip_header_t {
   uint8_t command; // 1 - request, 2 - response, 3,4,5 - obsolete/unused
   uint8_t version; // 1 for RIPv1
