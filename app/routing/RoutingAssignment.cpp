@@ -13,7 +13,7 @@
 #include "RoutingAssignment.hpp"
 
 // true if dealing with extra
-#define EXTRA false
+#define EXTRA true
 #define isLog false
 #define TIMEOUT 50000000000 // 50s
 
@@ -90,6 +90,16 @@ ipv4_t get_pair_ipv4(ipv4_t ipv4) {
   return ip;
 }
 
+// is current node called IPV4?
+bool is_ipv4(dist_entry *all_dist_entry, ipv4_t ipv4) {
+  for (dist_entry *cur = all_dist_entry->next; cur != all_dist_entry;
+       cur = cur->next) {
+    if (compare_ipv4(cur->ipv4, ipv4) && cur->metric == 0) {
+      return true;
+    }
+  }
+  return false;
+}
 // return max metric for both extra and non-extra
 int get_infinite_metric(bool extra) {
   if (!extra) {
@@ -97,16 +107,6 @@ int get_infinite_metric(bool extra) {
   } else {
     // for extra
     return 300;
-  }
-}
-
-// return metric of adjacent node IPV4, which is 1 for non-extra
-int get_metric(ipv4_t ipv4, bool extra) {
-  if (!extra) {
-    return 1;
-  } else {
-    // for extra
-    assert(false);
   }
 }
 
@@ -290,6 +290,10 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   ipv4_t cur_ipv4;
   dist_entry *cur_dist_entry;
   int index;
+  int get_metric;
+  int link_cost;
+  int p;
+  int q;
 
   Packet pkt(1500);
 
@@ -317,7 +321,7 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
 
   rip_entry_t rip_entries[entry_cnt];
 
-  for (int p = 0; p < entry_cnt; p++) {
+  for (p = 0; p < entry_cnt; p++) {
     packet.readData(46 + 20 * p, &rip_entries[p], 20);
   }
 
@@ -352,10 +356,13 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   } else if (rip_header.command == 2) {
     // printf("pkt com 2-entry_cnt: %d\n", entry_cnt);
 
-    // if receive a response, update the distance vector table
-    for (int p = 0; p < entry_cnt; p++) {
+    for (p = 0; p < entry_cnt; p++) {
       rip_entries[p].ip_addr = convert_4byte(rip_entries[p].ip_addr);
       rip_entries[p].metric = convert_4byte(rip_entries[p].metric);
+    }
+
+    // if receive a response, update the distance vector table
+    for (p = 0; p < entry_cnt; p++) {
       cur_ipv4 = int32toipv4(rip_entries[p].ip_addr);
       if (compare_ipv4(cur_ipv4, get_ipv4(255, 255, 255, 255)) ||
           compare_ipv4(cur_ipv4, get_ipv4(0, 0, 0, 0))) {
@@ -365,12 +372,31 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
       if (cur_dist_entry->metric == get_infinite_metric(EXTRA)) {
         this->total_dist_cnt++;
       }
-      // printf("compare cur: %d and new1: %d + new2: %d\n",
-      //        cur_dist_entry->metric, rip_entries[p].metric,
-      //        get_metric(int32toipv4(src_addr), EXTRA));
+
+      // return metric of adjacent node IPV4, which is 1 for non-extra
+      if (!EXTRA) {
+        get_metric = 1;
+      } else {
+        // for extra
+        get_metric = 1;
+        link_cost = 1;
+
+        for (q = 0; q < entry_cnt; q++) {
+          if (rip_entries[q].metric == 0 &&
+              is_ipv4(this->all_dist_entry,
+                      get_pair_ipv4(int32toipv4(rip_entries[q].ip_addr)))) {
+            link_cost =
+                linkCost(getRoutingTable(int32toipv4(rip_entries[q].ip_addr)));
+            if (link_cost > 1) {
+              get_metric = link_cost;
+              break;
+            }
+          }
+        }
+      }
+
       cur_dist_entry->metric =
-          min(cur_dist_entry->metric,
-              rip_entries[p].metric + get_metric(int32toipv4(src_addr), EXTRA));
+          min(cur_dist_entry->metric, rip_entries[p].metric + get_metric);
     }
     // iterate_dist_entry(this->all_dist_entry);
   } else {
