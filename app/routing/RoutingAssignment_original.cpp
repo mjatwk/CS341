@@ -13,10 +13,8 @@
 #include "RoutingAssignment.hpp"
 
 // true if dealing with extra
-#define EXTRA true
-#define isLog false
-#define TIMEOUT 50000000000 // 50s
-
+#define EXTRA false
+#define TIMEOUT 1000000000 // 1s
 namespace E {
 
 RoutingAssignment::RoutingAssignment(Host &host)
@@ -24,6 +22,10 @@ RoutingAssignment::RoutingAssignment(Host &host)
       TimerModule("UDP", host) {}
 
 RoutingAssignment::~RoutingAssignment() {}
+
+// cyclic linked list containing all dist_entry
+struct dist_entry *all_dist_entry;
+int total_dist_cnt;
 
 int min(int a, int b) { return a < b ? a : b; }
 
@@ -50,7 +52,7 @@ ipv4_t int32toipv4(int32_t int32) {
 }
 
 // print all dist_entry in all_dist_entry
-void iterate_dist_entry(struct dist_entry *all_dist_entry) {
+void iterate_dist_entry() {
   for (dist_entry *cur = all_dist_entry->next; cur != all_dist_entry;
        cur = cur->next) {
     printf("ip: %d, %d, %d, %d, metric: %d\n", cur->ipv4[0], cur->ipv4[1],
@@ -85,21 +87,13 @@ ipv4_t get_pair_ipv4(ipv4_t ipv4) {
   } else if (ip[3] == 2) {
     ip[3] = 1;
   } else {
+    printf("get_pair_ipv4 error: %d, %d, %d, %d \n", ipv4[0], ipv4[1], ipv4[2],
+           ipv4[3]);
     assert(false);
   }
   return ip;
 }
 
-// is current node called IPV4?
-bool is_ipv4(dist_entry *all_dist_entry, ipv4_t ipv4) {
-  for (dist_entry *cur = all_dist_entry->next; cur != all_dist_entry;
-       cur = cur->next) {
-    if (compare_ipv4(cur->ipv4, ipv4) && cur->metric == 0) {
-      return true;
-    }
-  }
-  return false;
-}
 // return max metric for both extra and non-extra
 int get_infinite_metric(bool extra) {
   if (!extra) {
@@ -108,6 +102,27 @@ int get_infinite_metric(bool extra) {
     // for extra
     return 300;
   }
+}
+
+// return metric of adjacent node IPV4, which is 1 for non-extra
+int get_adjacent_metric(ipv4_t ipv4, bool extra) {
+  if (!extra) {
+    return 1;
+  } else {
+    // for extra
+    assert(false);
+  }
+}
+
+// return metric of IPV4 from current table
+int get_metric(ipv4_t ipv4) {
+  for (dist_entry *cur = all_dist_entry->next; cur != all_dist_entry;
+       cur = cur->next) {
+    if (compare_ipv4(cur->ipv4, ipv4)) {
+      return cur->metric;
+    }
+  }
+  return get_infinite_metric(false);
 }
 
 // return UDP packet-IP header, UDP header, RIPv1 header written
@@ -151,7 +166,8 @@ Packet write_rip_packet(Packet pkt, rip_entry_t entry, int index) {
   int address_family = convert_2byte(entry.address_family);
   int ip_addr = convert_4byte(entry.ip_addr);
   int metric = convert_4byte(entry.metric);
-
+  printf("write index %d: ip_addr: %d, metric: %d\n", index, ip_addr,
+         convert_4byte(metric));
   pkt.writeData(entry_start + 0, &address_family, 2);
   pkt.writeData(entry_start + 2, &entry.zero_1, 2);
   pkt.writeData(entry_start + 4, &ip_addr, 4);
@@ -164,7 +180,7 @@ Packet write_rip_packet(Packet pkt, rip_entry_t entry, int index) {
 
 // find dist_entry from all_dist_entry by IPV4
 // if none found, append new entry with given IPV4
-dist_entry *get_dist_entry(dist_entry *all_dist_entry, ipv4_t ipv4) {
+dist_entry *get_dist_entry(ipv4_t ipv4) {
   for (dist_entry *cur = all_dist_entry->next; cur != all_dist_entry;
        cur = cur->next) {
     if (compare_ipv4(cur->ipv4, ipv4)) {
@@ -178,42 +194,20 @@ dist_entry *get_dist_entry(dist_entry *all_dist_entry, ipv4_t ipv4) {
   temp->next = all_dist_entry;
   all_dist_entry->prev->next = temp;
   all_dist_entry->prev = temp;
+  total_dist_cnt++;
   return temp;
 }
 
 void RoutingAssignment::initialize() {
+
   Packet pkt(1500);
 
   // init
-  this->all_dist_entry = (dist_entry *)malloc(sizeof(all_dist_entry));
-  this->all_dist_entry->prev = this->all_dist_entry;
-  this->all_dist_entry->next = this->all_dist_entry;
-  this->total_dist_cnt = 0;
+  all_dist_entry = (dist_entry *)malloc(sizeof(dist_entry));
+  all_dist_entry->prev = all_dist_entry;
+  all_dist_entry->next = all_dist_entry;
 
-  // printf("init\n");
-
-  for (int k = 0; k < getPortCount(); k++) {
-    std::optional<ipv4_t> ip = getIPAddr(k);
-    if (ip) {
-      // printf("ip: %d, %d, %d, %d, port: %d\n", ip.value().at(0),
-      //        ip.value().at(1), ip.value().at(2), ip.value().at(3), k);
-
-      // prepare two dist_entry
-      dist_entry *temp_self = (dist_entry *)malloc(sizeof(dist_entry));
-      temp_self->ipv4 = ip.value();
-      temp_self->metric = 0;
-
-      // append self dist_entry to to all_dist_entry
-      temp_self->prev = this->all_dist_entry->prev;
-      temp_self->next = this->all_dist_entry;
-      this->all_dist_entry->prev->next = temp_self;
-      this->all_dist_entry->prev = temp_self;
-
-      this->total_dist_cnt++;
-    } else {
-      assert(false);
-    }
-  }
+  total_dist_cnt = 0;
 
   // send first request
   // address family id as 0, IP addr as 0, metric as 16
@@ -222,12 +216,45 @@ void RoutingAssignment::initialize() {
   rip.header.command = 1;
   rip.header.version = 1;
 
+  printf("init\n");
+
+  for (int k = 0; k < 10; k++) {
+    std::optional<ipv4_t> ip = getIPAddr(k);
+    if (ip) {
+      printf("ip: %d, %d, %d, %d, port: %d\n", ip.value().at(0),
+             ip.value().at(1), ip.value().at(2), ip.value().at(3), k);
+
+      // prepare two dist_entry
+      dist_entry *temp_self = (dist_entry *)malloc(sizeof(dist_entry));
+      temp_self->ipv4 = ip.value();
+      temp_self->metric = 0;
+
+      // dist_entry *temp_pair = (dist_entry *)malloc(sizeof(dist_entry));
+      // ip = get_pair_ipv4(ip.value());
+
+      // temp_pair->ipv4 = ip.value();
+      // temp_pair->metric = get_adjacent_metric(ip.value(), EXTRA);
+
+      // append both to to all_dist_entry
+      temp_self->prev = all_dist_entry->prev;
+      temp_self->next = all_dist_entry;
+      all_dist_entry->prev->next = temp_self;
+      all_dist_entry->prev = temp_self;
+      // temp_self->prev = all_dist_entry->prev;
+      // temp_self->next = temp_pair;
+      // temp_pair->prev = temp_self;
+      // temp_pair->next = all_dist_entry;
+      // all_dist_entry->prev->next = temp_self;
+      // all_dist_entry->prev = temp_pair;
+
+      total_dist_cnt++;
+    }
+  }
   int32_t dst_addr;
   ipv4_t dst_ipv4;
-
   // send request for all different interfaces
-  for (dist_entry *cur = this->all_dist_entry->next;
-       cur != this->all_dist_entry; cur = cur->next) {
+  for (dist_entry *cur = all_dist_entry->next; cur != all_dist_entry;
+       cur = cur->next) {
     if (cur->metric == 0) {
       // pkt = prepare_packet(cur->ipv4, get_pair_ipv4(cur->ipv4), 1, 1);
       pkt = prepare_packet(cur->ipv4, get_ipv4(255, 255, 255, 255), 1, 1);
@@ -240,26 +267,23 @@ void RoutingAssignment::initialize() {
 
       pkt.readData(30, &dst_addr, 4);
       dst_ipv4 = int32toipv4(convert_4byte(dst_addr));
-      // printf("packet sent-ip: %d, %d, %d, %d to %d, %d, %d, %d\n",
-      // cur->ipv4[0],
-      //        cur->ipv4[1], cur->ipv4[2], cur->ipv4[3], dst_ipv4[0],
-      //        dst_ipv4[1], dst_ipv4[2], dst_ipv4[3]);
+      printf("packet sent-ip: %d, %d, %d, %d to %d, %d, %d, %d\n", cur->ipv4[0],
+             cur->ipv4[1], cur->ipv4[2], cur->ipv4[3], dst_ipv4[0], dst_ipv4[1],
+             dst_ipv4[2], dst_ipv4[3]);
       sendPacket("IPv4", std::move(pkt));
       free(rip_entry);
-    } else {
-      assert(false);
     }
     // start timer
-    addTimer(0, TIMEOUT);
+    addTimer(cur->ipv4, TIMEOUT);
   }
 }
 
 void RoutingAssignment::finalize() {
   // free all allocated memories
-  for (dist_entry *cur = this->all_dist_entry->next;
-       cur != this->all_dist_entry; cur = cur->next) {
-    free(cur);
-  }
+  // for (dist_entry *cur = all_dist_entry->next; cur != all_dist_entry;
+  //      cur = cur->next) {
+  //   free(cur);
+  // }
 }
 
 /**
@@ -269,12 +293,11 @@ void RoutingAssignment::finalize() {
  * @return cost or -1 for no found host
  */
 Size RoutingAssignment::ripQuery(const ipv4_t &ipv4) {
-  // printf("rip query start: %d, %d, %d, %d\n", ipv4[0], ipv4[1], ipv4[2],
-  //        ipv4[3]);
-
+  printf("rip query start: %d, %d, %d, %d\n", ipv4[0], ipv4[1], ipv4[2],
+         ipv4[3]);
   // return hop-count to reach the IP address
-  for (dist_entry *cur = this->all_dist_entry->next;
-       cur != this->all_dist_entry; cur = cur->next) {
+  for (dist_entry *cur = all_dist_entry->next; cur != all_dist_entry;
+       cur = cur->next) {
     if (compare_ipv4(cur->ipv4, ipv4)) {
       return cur->metric;
     }
@@ -290,10 +313,6 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   ipv4_t cur_ipv4;
   dist_entry *cur_dist_entry;
   int index;
-  int get_metric;
-  int link_cost;
-  int p;
-  int q;
 
   Packet pkt(1500);
 
@@ -311,34 +330,34 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
   ipv4_t dst_ipv4 = int32toipv4(dst_addr);
   int entry_cnt = (pkt_length - 46) / 20;
 
-  // printf("%s pkt arrived from %d, %d, %d, %d to %d, %d, %d, %d, length:
-  // %d\n",
-  //        rip_header.command == 1 ? "request" : "response", src_ipv4[0],
-  //        src_ipv4[1], src_ipv4[2], src_ipv4[3], dst_ipv4[0], dst_ipv4[1],
-  //        dst_ipv4[2], dst_ipv4[3], pkt_length);
-
-  // iterate_dist_entry(this->all_dist_entry);
+  printf("%s pkt arrived from %d, %d, %d, %d to %d, %d, %d, %d, length: %d\n",
+         rip_header.command == 1 ? "request" : "response", src_ipv4[0],
+         src_ipv4[1], src_ipv4[2], src_ipv4[3], dst_ipv4[0], dst_ipv4[1],
+         dst_ipv4[2], dst_ipv4[3], pkt_length);
+  iterate_dist_entry();
 
   rip_entry_t rip_entries[entry_cnt];
 
-  for (p = 0; p < entry_cnt; p++) {
+  for (int p = 0; p < entry_cnt; p++) {
     packet.readData(46 + 20 * p, &rip_entries[p], 20);
   }
 
   if (rip_header.command == 1) {
-    // printf("pkt com 1 send response\n");
-
+    printf("pkt com 1\n");
     // if receive a request, send distance vector table to the request sender
     assert(entry_cnt = 1);
+    // assert(compare_ipv4(dst_ipv4, get_ipv4(255, 255, 255, 255)));
+
+    printf("send response\n");
 
     // send response for all different interfaces
-    for (dist_entry *cur = this->all_dist_entry->next;
-         cur != this->all_dist_entry; cur = cur->next) {
+    for (dist_entry *cur = all_dist_entry->next; cur != all_dist_entry;
+         cur = cur->next) {
       if (cur->metric == 0) {
-        pkt = prepare_packet(cur->ipv4, src_ipv4, 2, this->total_dist_cnt);
+        pkt = prepare_packet(cur->ipv4, src_ipv4, 2, total_dist_cnt);
         index = 0;
-        for (dist_entry *curr = this->all_dist_entry->next;
-             curr != this->all_dist_entry; curr = curr->next) {
+        for (dist_entry *curr = all_dist_entry->next; curr != all_dist_entry;
+             curr = curr->next) {
           rip_entry_t *rip_entry = (rip_entry_t *)malloc(sizeof(rip_entry));
           memset(rip_entry, 0, sizeof(rip_entry));
           rip_entry->address_family = 2;
@@ -347,58 +366,26 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
           pkt = write_rip_packet(pkt, *rip_entry, index++);
           free(rip_entry);
         }
-        // printf("pkt com 1-pkt sent ip: %d, %d, %d, %d to %d, %d, %d, %d\n",
-        //        cur->ipv4[0], cur->ipv4[1], cur->ipv4[2], cur->ipv4[3],
-        //        src_ipv4[0], src_ipv4[1], src_ipv4[2], src_ipv4[3]);
+        printf("pkt com 1-pkt sent ip: %d, %d, %d, %d to %d, %d, %d, %d\n",
+               cur->ipv4[0], cur->ipv4[1], cur->ipv4[2], cur->ipv4[3],
+               src_ipv4[0], src_ipv4[1], src_ipv4[2], src_ipv4[3]);
         sendPacket("IPv4", std::move(pkt));
       }
     }
   } else if (rip_header.command == 2) {
-    // printf("pkt com 2-entry_cnt: %d\n", entry_cnt);
-
-    for (p = 0; p < entry_cnt; p++) {
-      rip_entries[p].ip_addr = convert_4byte(rip_entries[p].ip_addr);
-      rip_entries[p].metric = convert_4byte(rip_entries[p].metric);
-    }
-
+    printf("pkt com 2-entry_cnt: %d\n", entry_cnt);
     // if receive a response, update the distance vector table
-    for (p = 0; p < entry_cnt; p++) {
+    for (int p = 0; p < entry_cnt; p++) {
       cur_ipv4 = int32toipv4(rip_entries[p].ip_addr);
-      if (compare_ipv4(cur_ipv4, get_ipv4(255, 255, 255, 255)) ||
-          compare_ipv4(cur_ipv4, get_ipv4(0, 0, 0, 0))) {
-        continue;
-      }
       cur_dist_entry = get_dist_entry(this->all_dist_entry, cur_ipv4);
-      if (cur_dist_entry->metric == get_infinite_metric(EXTRA)) {
-        this->total_dist_cnt++;
-      }
-
-      // return metric of adjacent node IPV4, which is 1 for non-extra
-      if (!EXTRA) {
-        get_metric = 1;
-      } else {
-        // for extra
-        get_metric = 1;
-        link_cost = 1;
-
-        for (q = 0; q < entry_cnt; q++) {
-          if (rip_entries[q].metric == 0 &&
-              is_ipv4(this->all_dist_entry,
-                      get_pair_ipv4(int32toipv4(rip_entries[q].ip_addr)))) {
-            link_cost =
-                linkCost(getRoutingTable(int32toipv4(rip_entries[q].ip_addr)));
-            if (link_cost > 1) {
-              get_metric = link_cost;
-              break;
-            }
-          }
-        }
-      }
-
+      this->total_dist_cnt++;
       cur_dist_entry->metric =
-          min(cur_dist_entry->metric, rip_entries[p].metric + get_metric);
+          min(cur_dist_entry->metric,
+              rip_entries[p].metric + get_metric(int32toipv4(src_addr)));
+      printf("compare cur: %d and new1: %d + new2: %d\n",
+             cur_dist_entry->metric, rip_entries[p].metric,
+             get_metric(int32toipv4(src_addr)));
     }
-    // iterate_dist_entry(this->all_dist_entry);
   } else {
     // error
     assert(false);
@@ -406,34 +393,31 @@ void RoutingAssignment::packetArrived(std::string fromModule, Packet &&packet) {
 }
 
 void RoutingAssignment::timerCallback(std::any payload) {
-  // printf("timer fin\n");
+  printf("timer fin\n");
   int index;
 
   Packet pkt(1500);
 
-  // struct dist_entry *all_dist_entry = std::any_cast<dist_entry *>(payload);
+  ipv4_t timer_ipv4 = std::any_cast<ipv4_t>(payload);
 
+  pkt = prepare_packet(timer_ipv4, get_ipv4(255, 255, 255, 255), 2,
+                       total_dist_cnt);
   // broadcast a response with current distance vector table
-  // send response for all different interfaces
-  for (dist_entry *cur = this->all_dist_entry->next;
-       cur != this->all_dist_entry; cur = cur->next) {
-    if (cur->metric == 0) {
-      pkt = prepare_packet(cur->ipv4, get_ipv4(255, 255, 255, 255), 2,
-                           this->total_dist_cnt);
-      index = 0;
-      for (dist_entry *curr = this->all_dist_entry->next;
-           curr != this->all_dist_entry; curr = curr->next) {
-        rip_entry_t *rip_entry = (rip_entry_t *)malloc(sizeof(rip_entry));
-        memset(rip_entry, 0, sizeof(rip_entry));
-        rip_entry->address_family = 2;
-        rip_entry->ip_addr = ipv4toint32(curr->ipv4);
-        rip_entry->metric = curr->metric;
-        pkt = write_rip_packet(pkt, *rip_entry, index++);
-        free(rip_entry);
-      }
-      sendPacket("IPv4", std::move(pkt));
+  index = 0;
+  for (dist_entry *curr = all_dist_entry->next; curr != all_dist_entry;
+       curr = curr->next) {
+    if (curr->metric == 0) {
+      continue;
     }
+    rip_entry_t *rip_entry = (rip_entry_t *)malloc(sizeof(rip_entry));
+    memset(rip_entry, 0, sizeof(rip_entry));
+    rip_entry->address_family = 2;
+    rip_entry->ip_addr = ipv4toint32(curr->ipv4);
+    rip_entry->metric = curr->metric;
+    pkt = write_rip_packet(pkt, *rip_entry, index++);
+    free(rip_entry);
   }
-  addTimer(0, TIMEOUT);
+  sendPacket("IPv4", std::move(pkt));
 }
+
 } // namespace E

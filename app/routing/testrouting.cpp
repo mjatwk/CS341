@@ -1,4 +1,3 @@
-
 #include <E/E_Common.hpp>
 #include <E/E_Module.hpp>
 #include <E/E_TimeUtil.hpp>
